@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex Usage Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Codex Usage</h1>
+          <p id="meta">Loading local usage snapshot...</p>
+        </div>
+        <button id="refresh" type="button">Refresh</button>
+      </header>
+
+      <section class="metrics" id="metrics"></section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Recent Days</h2>
+          <span>Token trend</span>
+        </div>
+        <canvas id="trend" width="1100" height="260"></canvas>
+      </section>
+
+      <section class="grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Active Window</h2>
+            <span>Session and rate limits</span>
+          </div>
+          <div id="active"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Projects</h2>
+            <span>Usage by cwd</span>
+          </div>
+          <div id="projects"></div>
+        </section>
+      </section>
+
+      <section class="grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Model Distribution</h2>
+            <span>Session totals</span>
+          </div>
+          <div id="models"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Top Sessions</h2>
+            <span>Largest token consumers</span>
+          </div>
+          <div id="sessions"></div>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,7 @@
+node_modules/
+state/
+work/
+outputs/
+.env
+.DS_Store
+*.log

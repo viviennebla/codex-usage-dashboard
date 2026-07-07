@@ -1,0 +1,16 @@
+{
+  "name": "codex-usage-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Codex usage dashboard powered by native Codex JSONL logs.",
+  "type": "module",
+  "scripts": {
+    "snapshot": "node src/cli.js snapshot",
+    "cli": "node src/cli.js cli",
+    "web": "node src/cli.js web",
+    "check": "node src/cli.js --help"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
