@@ -232,6 +232,8 @@ async function parseClaudeFile(fileInfo, options) {
   const events = [];
   // Track message IDs to deduplicate sidechain replays
   const seenMessageIds = new Set();
+  let threadName = null;
+  let threadNameSource = null;
   let lineNumber = 0;
 
   const stream = createReadStream(fileInfo.file, { encoding: "utf8" });
@@ -246,6 +248,12 @@ async function parseClaudeFile(fileInfo, options) {
       entry = JSON.parse(line);
     } catch {
       continue;
+    }
+
+    // Capture session title from ai-title events
+    if (entry.type === "ai-title" && entry.aiTitle && !threadName) {
+      threadName = entry.aiTitle;
+      threadNameSource = "ai-title";
     }
 
     // Only process assistant messages with usage data
@@ -317,8 +325,8 @@ async function parseClaudeFile(fileInfo, options) {
       detectedName: fileInfo.detectedName,
       distro: null,
       user: null,
-      threadName: null,
-      threadNameSource: null,
+      threadName: threadName || null,
+      threadNameSource: threadNameSource || null,
       sessionFile: relative(fileInfo.projectDir, fileInfo.file).replace(/\\/g, "/"),
       isSidechain: !!entry.isSidechain,
       lineNumber,
