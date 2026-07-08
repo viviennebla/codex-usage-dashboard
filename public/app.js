@@ -203,7 +203,7 @@ function drawTrend(snapshot) {
   const canvas = $("trend");
   const ctx = canvas.getContext("2d");
   const tooltip = $("chartTooltip");
-  const rows = (snapshot.recent_days || []).slice(-30);
+  const rows = snapshot.recent_days || [];
   const dpr = window.devicePixelRatio || 1;
 
   const rect = canvas.getBoundingClientRect();
@@ -1214,9 +1214,22 @@ function selectedTrendSnapshot(snapshot) {
   const views = trendViews(snapshot);
   if (trendViewIndex >= views.length) trendViewIndex = 0;
   const view = views[trendViewIndex] || views[0];
+  // Always use exactly 30 days — pad with empty days if needed so all views animate
+  let days = (view.recent_days || []).slice(-30);
+  if (days.length < 30) {
+    const pad = [];
+    const last = days[0];
+    const startDate = last ? new Date(last.date) : new Date();
+    for (let i = days.length; i < 30; i++) {
+      const d = new Date(startDate);
+      d.setDate(d.getDate() - (i - days.length + 1));
+      pad.push({ date: d.toISOString().slice(0, 10), totalTokens: 0, eventCount: 0 });
+    }
+    days = [...pad.reverse(), ...days];
+  }
   return {
     ...snapshot,
-    recent_days: view.recent_days || [],
+    recent_days: days,
     today: view.today || null,
     totals: view.totals || null,
   };
