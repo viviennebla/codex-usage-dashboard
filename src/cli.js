@@ -463,7 +463,7 @@ function startWeb(options) {
         return;
       }
 
-      // ── GET /api/sources ── list registered + auto-discovered directories
+      // ── GET /api/sources ── list registered + auto-discovered + synced devices
       if (req.method === "GET" && url.pathname === "/api/sources") {
         const cfg = await readConfig();
         const dirs = cfg.directories || [];
@@ -475,9 +475,31 @@ function startWeb(options) {
         })));
         const discovered = await discoverSourceDiagnostics(dirs);
 
+        // Include synced remote devices as sources
+        const devices = await readDeviceStates(stateDir);
+        const remoteSources = [];
+        for (const [deviceId, { deviceName, snapshot }] of devices) {
+          remoteSources.push({
+            path: deviceId,
+            normalized_path: deviceId,
+            data_path: `state/${deviceId}.json`,
+            type: "remote",
+            label: deviceName || deviceId,
+            display_name: deviceName || deviceId,
+            status: "ok",
+            origin: "remote",
+            exists: true,
+            files_found: snapshot?.diagnostics?.events_read || snapshot?.totals?.eventCount || 0,
+            message: `Synced · ${snapshot?.generated_at?.slice(0, 10) || "unknown date"}`,
+            today_tokens: snapshot?.today?.totalTokens || 0,
+            generated_at: snapshot?.generated_at || null,
+          });
+        }
+
         sendJson(res, 200, {
           registered,
           discovered,
+          remote: remoteSources,
         });
         return;
       }

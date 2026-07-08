@@ -2,6 +2,21 @@ const $ = (id) => document.getElementById(id);
 
 /* ── Helpers ─────────────────────────────── */
 
+function toast(msg, kind = "info") {
+  const el = document.createElement("div");
+  const bg = kind === "success" ? "#22c55e" : kind === "error" ? "#ef4444" : "#3b82f6";
+  Object.assign(el.style, {
+    position: "fixed", bottom: "20px", right: "20px", zIndex: "999",
+    background: bg, color: "#fff", padding: "10px 20px", borderRadius: "8px",
+    fontFamily: "var(--font-sans)", fontSize: "13px", fontWeight: "600",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.5)", transition: "opacity 0.3s",
+    opacity: "1", maxWidth: "400px",
+  });
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 300); }, 3000);
+}
+
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;",
@@ -1154,7 +1169,7 @@ $("syncSave").addEventListener("click", async () => {
 });
 
 $("syncPush").addEventListener("click", async () => {
-  if (!syncServerUrl) { $("syncStatus").textContent = "Save server first"; return; }
+  if (!syncServerUrl) { toast("Save server first", "error"); return; }
   $("syncStatus").textContent = "Pushing…";
   try {
     const res = await fetch("/api/push-to-remote", {
@@ -1165,13 +1180,15 @@ $("syncPush").addEventListener("click", async () => {
     if (!res.ok) throw new Error(await res.text());
     $("syncStatus").textContent = "Push OK ✓";
     updateSyncTimes();
+    toast("Push successful ✓", "success");
   } catch (err) {
     $("syncStatus").textContent = "Push failed: " + err.message;
+    toast("Push failed: " + err.message, "error");
   }
 });
 
 $("syncPull").addEventListener("click", async () => {
-  if (!syncServerUrl) { $("syncStatus").textContent = "Save server first"; return; }
+  if (!syncServerUrl) { toast("Save server first", "error"); return; }
   $("syncStatus").textContent = "Pulling…";
   try {
     const res = await fetch("/api/sync", {
@@ -1184,8 +1201,10 @@ $("syncPull").addEventListener("click", async () => {
     $("syncStatus").textContent = result.message;
     updateSyncTimes();
     await refresh();
+    toast(result.message, "success");
   } catch (err) {
     $("syncStatus").textContent = "Pull failed: " + err.message;
+    toast("Pull failed: " + err.message, "error");
   }
 });
 
@@ -1320,6 +1339,18 @@ async function loadSources(message = "") {
         : `<span class="badge badge-idle" style="font-size:10px">auto</span>`;
       items.push(sourceRow(d, action));
     }
+    // Remote synced devices
+    const remote = data.remote || [];
+    if (remote.length > 0) {
+      items.push(`<div style="font-size:11px;color:#64748b;padding:12px 0 4px;text-transform:uppercase;letter-spacing:0.05em">Remote Devices</div>`);
+      for (const d of remote) {
+        items.push(sourceRow(
+          { ...d, type: "remote" },
+          `<span class="badge badge-active" style="font-size:10px">synced</span>`,
+        ));
+      }
+    }
+
     $("sourcesList").innerHTML = items.join("") || `<div class="empty"><p>No data sources found</p></div>`;
     for (const button of document.querySelectorAll("[data-remove-source]")) {
       button.addEventListener("click", () => {
@@ -1331,7 +1362,7 @@ async function loadSources(message = "") {
         importSource(button.dataset.path, button.dataset.type, button.dataset.label);
       });
     }
-    const total = (data.registered?.length || 0) + (data.discovered?.length || 0);
+    const total = (data.registered?.length || 0) + (data.discovered?.length || 0) + (data.remote?.length || 0);
     $("sourcesSummary").textContent = message || `${total} source${total !== 1 ? "s" : ""}`;
     return data;
   } catch (e) {
