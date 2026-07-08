@@ -1447,3 +1447,144 @@ async function removeSource(path, type) {
   }
 }
 
+/* ── Skill Sync Panel ────────────────────── */
+
+let skillSyncSelections = {}; // name -> "push" | "pull" | null
+
+$("skillSyncBtn").addEventListener("click", () => {
+  const panel = $("skillSyncPanel");
+  if (panel.style.display === "none") {
+    panel.style.display = "";
+    $("skillSyncServer").value = syncServerUrl || "";
+    $("skillSyncList").innerHTML = "";
+    $("skillSyncActions").style.display = "none";
+    $("skillSyncSummary").textContent = "";
+  } else {
+    panel.style.display = "none";
+  }
+});
+
+$("skillSyncCompare").addEventListener("click", async () => {
+  const serverUrl = $("skillSyncServer").value.trim() || syncServerUrl;
+  if (!serverUrl) { $("skillSyncSummary").textContent = "Enter a server URL"; return; }
+
+  $("skillSyncSummary").textContent = "Comparing…";
+  try {
+    const res = await fetch("/api/skills/compare", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ server: serverUrl }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    const comparison = data.comparison || [];
+    if (!comparison.length) {
+      $("skillSyncList").innerHTML = `<div class="empty"><p>No skills found. Register a third-party skill directory in Sources panel first.</p></div>`;
+      $("skillSyncActions").style.display = "none";
+      $("skillSyncSummary").textContent = "0 skills";
+      return;
+    }
+
+    skillSyncSelections = {};
+    let localCount = 0, remoteCount = 0;
+    const rows = comparison.map((item) => {
+      const badge =
+        item.status === "same" ? `<span class="badge badge-ok" style="font-size:10px">same</span>`
+        : item.status === "newer" ? `<span class="badge badge-active" style="font-size:10px">local newer</span>`
+        : item.status === "older" ? `<span class="badge badge-idle" style="font-size:10px">remote newer</span>`
+        : item.status === "local-only" ? `<span class="badge badge-active" style="font-size:10px">local only</span>`
+        : `<span class="badge badge-idle" style="font-size:10px">remote only</span>`;
+
+      // Determine available actions
+      const canPush = item.status === "newer" || item.status === "local-only";
+      const canPull = item.status === "older" || item.status === "remote-only";
+      if (canPush) { skillSyncSelections[item.name] = "push"; localCount++; }
+      else if (canPull) { skillSyncSelections[item.name] = "pull"; remoteCount++; }
+      else skillSyncSelections[item.name] = null;
+
+      const actionHtml = canPush
+        ? `<button class="btn sync-action-btn" data-name="${esc(item.name)}" data-dir="push" style="font-size:11px;padding:2px 8px">Push ▲</button>`
+        : canPull
+        ? `<button class="btn sync-action-btn" data-name="${esc(item.name)}" data-dir="pull" style="font-size:11px;padding:2px 8px">Pull ▼</button>`
+        : "";
+
+      return `<div class="row" style="align-items:center">
+        <div>
+          <div class="row-title">${esc(item.name)} ${badge}</div>
+          <div class="row-detail">${item.local ? `local: ${item.local.last_modified?.slice(0,10) || "?"}` : "no local"} · ${item.remote ? `remote: ${item.remote.last_modified?.slice(0,10) || "?"}` : "no remote"}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">${actionHtml}</div>
+      </div>`;
+    });
+
+    $("skillSyncList").innerHTML = rows.join("");
+    $("skillSyncActions").style.display = "flex";
+    $("skillSyncSummary").textContent = `${comparison.length} skills · ${localCount} push · ${remoteCount} pull`;
+
+    // Bind action buttons
+    $("skillSyncList").querySelectorAll(".sync-action-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const name = btn.dataset.name;
+        const dir = btn.dataset.dir;
+        skillSyncSelections[name] = dir;
+        // Highlight selected, dim others
+        $("skillSyncList").querySelectorAll(".sync-action-btn").forEach((b) => {
+          b.style.opacity = b.dataset.name === name ? "1" : "0.5";
+        });
+        // Also allow toggling
+        if (skillSyncSelections[name] === dir) {
+          btn.style.opacity = "1";
+        }
+      });
+    });
+  } catch (err) {
+    $("skillSyncSummary").textContent = "Error: " + err.message;
+  }
+});
+
+$("skillSyncApply").addEventListener("click", async () => {
+  const serverUrl = $("skillSyncServer").value.trim() || syncServerUrl;
+  const pushNames = Object.entries(skillSyncSelections).filter(([, v]) => v === "push").map(([k]) => k);
+  const pullNames = Object.entries(skillSyncSelections).filter(([, v]) => v === "pull").map(([k]) => k);
+
+  if (!pushNames.length && !pullNames.length) {
+    $("skillSyncSummary").textContent = "No skills selected";
+    return;
+  }
+
+  $("skillSyncApply").disabled = true;
+  try {
+    if (pushNames.length) {
+      $("skillSyncSummary").textContent = `Pushing ${pushNames.length} skill(s)…`;
+      const res = await fetch("/api/skills/push", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ server: serverUrl, names: pushNames, token: syncToken }),
+      });
+      const data = await res.json();
+      const ok = data.results?.filter((r) => r.ok).length || 0;
+      toast(`Pushed ${ok}/${pushNames.length} skills`, "success");
+    }
+    if (pullNames.length) {
+      $("skillSyncSummary").textContent = `Pulling ${pullNames.length} skill(s)…`;
+      const res = await fetch("/api/skills/pull", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ server: serverUrl, names: pullNames }),
+      });
+      const data = await res.json();
+      const ok = data.results?.filter((r) => r.ok).length || 0;
+      toast(`Pulled ${ok}/${pullNames.length} skills`, "success");
+    }
+    $("skillSyncPanel").style.display = "none";
+  } catch (err) {
+    toast("Skill sync failed: " + err.message, "error");
+  } finally {
+    $("skillSyncApply").disabled = false;
+  }
+});
+
+$("skillSyncCancel").addEventListener("click", () => {
+  $("skillSyncPanel").style.display = "none";
+});
+

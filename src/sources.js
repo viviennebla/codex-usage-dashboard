@@ -210,9 +210,11 @@ export async function resolveClaudeRoots(configDirectories = []) {
 }
 
 export async function inspectSource(path, type = "codex", labels = new Map()) {
-  const normalizedType = type === "claude" ? "claude" : "codex";
-  const root = normalizedType === "claude" ? normalizeClaudeRoot(path) : normalizeCodexHome(path);
-  const dataDir = normalizedType === "claude" ? join(root, "projects") : join(root, "sessions");
+  const normalizedType = type === "claude" ? "claude" : type === "skills" ? "skills" : "codex";
+  const root = normalizedType === "skills" ? path
+    : normalizedType === "claude" ? normalizeClaudeRoot(path) : normalizeCodexHome(path);
+  const dataDir = normalizedType === "skills" ? path
+    : normalizedType === "claude" ? join(root, "projects") : join(root, "sessions");
   const key = normalizePathKey(root);
   const env = normalizedType === "codex"
     ? codexEnvironmentForHome(root, labels)
@@ -248,19 +250,32 @@ export async function inspectSource(path, type = "codex", labels = new Map()) {
     return { ...result, status: "missing", message: `Expected data directory not found: ${dataDir}` };
   }
 
-  try {
-    const files = await countJsonl(dataDir);
-    result.files_found = files;
-    result.status = files > 0 ? "ok" : "empty";
-    result.message = files > 0 ? `Found ${files} JSONL file(s)` : "No JSONL files found";
-    return result;
-  } catch (error) {
-    return {
-      ...result,
-      status: "unreadable",
-      message: error?.message || "Cannot read data directory",
-    };
+  // For skills, count subdirectories; for agents, count JSONL files
+  if (normalizedType === "skills") {
+    try {
+      const ents = await readdir(dataDir, { withFileTypes: true });
+      const dirCount = ents.filter((e) => e.isDirectory()).length;
+      result.files_found = dirCount;
+      result.status = dirCount > 0 ? "ok" : "empty";
+      result.message = dirCount > 0 ? `Found ${dirCount} skill(s)` : "No skill directories found";
+    } catch (error) {
+      return { ...result, status: "unreadable", message: error?.message || "Cannot read skills directory" };
+    }
+  } else {
+    try {
+      const files = await countJsonl(dataDir);
+      result.files_found = files;
+      result.status = files > 0 ? "ok" : "empty";
+      result.message = files > 0 ? `Found ${files} JSONL file(s)` : "No JSONL files found";
+    } catch (error) {
+      return {
+        ...result,
+        status: "unreadable",
+        message: error?.message || "Cannot read data directory",
+      };
+    }
   }
+  return result;
 }
 
 export async function discoverSourceDiagnostics(configDirectories = []) {

@@ -50,6 +50,7 @@ function parseArgs(argv) {
     else if (arg === "--no-wsl") options.noWsl = true;
     else if (arg === "--path") options.path = rest[++index];
     else if (arg === "--type") options.type = rest[++index];
+    else if (arg === "--kind") options.kind = rest[++index];
     else if (arg === "--label") options.label = rest[++index];
     else if (arg === "--server") options.server = rest[++index];
     else if (arg === "--device") options.device = rest[++index];
@@ -67,7 +68,7 @@ Usage:
   node src/cli.js web [--port 34777] [--bind 127.0.0.1] [--no-wsl]
   node src/cli.js push --server <url> [--device <name>] [--token <token>]
   node src/cli.js pull --server <url>
-  node src/cli.js register --path <dir> --type codex|claude [--label <name>]
+  node src/cli.js register --path <dir> --type codex|claude|skills [--label <name>]
 
 Commands:
   snapshot  Write the canonical dashboard snapshot.
@@ -670,7 +671,7 @@ function startWeb(options) {
       if (req.method === "POST" && url.pathname === "/api/sources") {
         const body = await readRequestBody(req);
         if (!body || !body.path) { sendError(res, 400, "Missing path"); return; }
-        const type = body.type === "claude" ? "claude" : "codex";
+        const type = body.type === "claude" ? "claude" : body.type === "skills" ? "skills" : "codex";
         const result = await addDirectory(body.path, type, body.label || null);
         const labels = sourceLabelMap(result.config.directories || []);
         const inspection = await inspectSource(body.path, type, labels);
@@ -686,6 +687,90 @@ function startWeb(options) {
         if (!p) { sendError(res, 400, "Missing path"); return; }
         const result = await removeDirectory(p, t || null);
         sendJson(res, 200, result);
+        return;
+      }
+
+      // ── GET /api/skills/local ── scan registered skill directories
+      if (req.method === "GET" && url.pathname === "/api/skills/local") {
+        const { scanAllSkillDirs } = await import("./skills-sync.js");
+        const cfg = await readConfig();
+        const skills = await scanAllSkillDirs(cfg.directories || []);
+        sendJson(res, 200, skills);
+        return;
+      }
+
+      // ── POST /api/skills/compare ── compare local vs remote
+      if (req.method === "POST" && url.pathname === "/api/skills/compare") {
+        const body = await readRequestBody(req);
+        const serverUrl = body?.server;
+        if (!serverUrl) { sendError(res, 400, "Missing server"); return; }
+        const { scanAllSkillDirs, compareSkills } = await import("./skills-sync.js");
+        const cfg = await readConfig();
+        const localSkills = await scanAllSkillDirs(cfg.directories || []);
+        const remoteUrl = String(serverUrl).replace(/\/+$/, "");
+        let remoteSkills = [];
+        try {
+          const resp = await fetch(`${remoteUrl}/api/skills`);
+          if (resp.ok) remoteSkills = await resp.json();
+        } catch { /* server unreachable → all local-only */ }
+        const comparison = compareSkills(localSkills, remoteSkills);
+        sendJson(res, 200, { local: localSkills, remote: remoteSkills, comparison });
+        return;
+      }
+
+      // ── POST /api/skills/push ── push selected skills to remote
+      if (req.method === "POST" && url.pathname === "/api/skills/push") {
+        const body = await readRequestBody(req);
+        const serverUrl = body?.server;
+        const names = body?.names || [];
+        const token = body?.token || null;
+        if (!serverUrl || !names.length) { sendError(res, 400, "Missing server or names"); return; }
+        const { scanAllSkillDirs } = await import("./skills-sync.js");
+        const cfg = await readConfig();
+        const localSkills = await scanAllSkillDirs(cfg.directories || []);
+        const localMap = new Map(localSkills.map((s) => [s.name, s]));
+        const remoteUrl = String(serverUrl).replace(/\/+$/, "");
+        const results = [];
+        const headers = { "content-type": "application/json" };
+        if (token) headers.authorization = `Bearer ${token}`;
+        for (const name of names) {
+          const skill = localMap.get(name);
+          if (!skill) { results.push({ name, ok: false, error: "Not found locally" }); continue; }
+          try {
+            const resp = await fetch(`${remoteUrl}/api/skills`, {
+              method: "POST", headers,
+              body: JSON.stringify({ name: skill.name, files: skill.files, last_modified: skill.last_modified, sha256: skill.sha256, device_id: hostname() }),
+            });
+            results.push({ name, ok: resp.ok });
+          } catch (err) { results.push({ name, ok: false, error: err.message }); }
+        }
+        sendJson(res, 200, { results });
+        return;
+      }
+
+      // ── POST /api/skills/pull ── pull selected skills from remote
+      if (req.method === "POST" && url.pathname === "/api/skills/pull") {
+        const body = await readRequestBody(req);
+        const serverUrl = body?.server;
+        const names = body?.names || [];
+        if (!serverUrl || !names.length) { sendError(res, 400, "Missing server or names"); return; }
+        const { writeSkillFiles } = await import("./skills-sync.js");
+        const cfg = await readConfig();
+        const skillDirs = (cfg.directories || []).filter((d) => d.type === "skills").map((d) => d.path);
+        if (!skillDirs.length) { sendError(res, 400, "No skill directories registered"); return; }
+        const targetDir = skillDirs[0]; // Write to first registered skill dir
+        const remoteUrl = String(serverUrl).replace(/\/+$/, "");
+        const results = [];
+        for (const name of names) {
+          try {
+            const resp = await fetch(`${remoteUrl}/api/skills/${encodeURIComponent(name)}`);
+            if (!resp.ok) { results.push({ name, ok: false, error: `HTTP ${resp.status}` }); continue; }
+            const skill = await resp.json();
+            await writeSkillFiles(name, skill.files, targetDir);
+            results.push({ name, ok: true });
+          } catch (err) { results.push({ name, ok: false, error: err.message }); }
+        }
+        sendJson(res, 200, { results });
         return;
       }
 
@@ -768,8 +853,8 @@ async function registerDirectory(options) {
     return;
   }
   const type = options.type || "codex";
-  if (type !== "codex" && type !== "claude") {
-    console.error("Error: --type must be 'codex' or 'claude'.");
+  if (type !== "codex" && type !== "claude" && type !== "skills") {
+    console.error("Error: --type must be 'codex', 'claude', or 'skills'.");
     process.exitCode = 2;
     return;
   }

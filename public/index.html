@@ -31,6 +31,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           Sync
         </button>
+        <button id="skillSyncBtn" type="button" class="btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          Skills
+        </button>
       </header>
 
       <section class="panel sources-panel" id="sourcesPanel" style="display:none">
@@ -42,7 +46,7 @@
         <div style="margin-top:12px;display:flex;gap:8px">
           <input id="srcPath" placeholder="/path/to/.codex" style="flex:1;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
           <input id="srcLabel" placeholder="name" style="width:120px;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
-          <select id="srcType" style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 8px;color:#e2e8f0;font:12px 'Fira Code',monospace"><option value="codex">Codex</option><option value="claude">Claude</option></select>
+          <select id="srcType" style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 8px;color:#e2e8f0;font:12px 'Fira Code',monospace"><option value="codex">Codex</option><option value="claude">Claude</option><option value="skills">Skills</option></select>
           <button id="srcAdd" class="btn" style="white-space:nowrap">+ Add</button>
         </div>
       </section>
@@ -74,6 +78,25 @@
         <!-- Advanced: device management -->
         <div id="syncDevicesSection" style="border-top:1px solid #1e293b;padding-top:8px;display:none">
           <div id="syncDeviceList"></div>
+        </div>
+      </section>
+
+      <section class="panel sync-panel" id="skillSyncPanel" style="display:none">
+        <div class="panel-head">
+          <h2>Skill Sync</h2>
+          <span class="panel-sub" id="skillSyncSummary"></span>
+        </div>
+        <div style="margin-bottom:8px;font-size:11px;color:#64748b">
+          Third-party skill directories registered in Sources panel.
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button id="skillSyncCompare" class="btn">Compare with Server</button>
+          <input id="skillSyncServer" placeholder="http://your-server:34777" style="flex:1;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
+        </div>
+        <div id="skillSyncList"></div>
+        <div id="skillSyncActions" style="display:none;margin-top:12px;display:flex;gap:8px">
+          <button id="skillSyncApply" class="btn" style="background:#22c55e;color:#0b1120;border-color:#22c55e;font-weight:600">Apply Selected</button>
+          <button id="skillSyncCancel" class="btn">Cancel</button>
         </div>
       </section>
 
