@@ -842,16 +842,18 @@ function renderModels(snapshot) {
 function renderSkills(snapshot) {
   const skills = snapshot.skills || [];
   if (!skills.length) {
-    $("skills").innerHTML = emptyState("No skill data");
+    $("skills").innerHTML = emptyState("No tool/skill data");
     return;
   }
-  $("skills").innerHTML = skills.map((s) =>
-    usageRow(
+  $("skills").innerHTML = skills.map((s) => {
+    const hasTokens = s.totalTokens && s.totalTokens > 0;
+    const detail = `${s.count} call${s.count !== 1 ? "s" : ""}${hasTokens ? "" : " · Codex MCP tool"}`;
+    return usageRow(
       s.name,
-      `${s.count} call${s.count !== 1 ? "s" : ""}`,
-      fmtShort(s.totalTokens),
-    )
-  ).join("");
+      detail,
+      hasTokens ? fmtShort(s.totalTokens) : "—",
+    );
+  }).join("");
 }
 
 /* ── Render: Top Sessions ────────────────── */
