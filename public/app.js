@@ -130,16 +130,20 @@ function renderMetrics(snapshot) {
   const primaryPct = limits.primary?.used_percent;
   const primaryClass = primaryPct != null && primaryPct >= 90 ? "warn" : "";
 
+  // Cache hit rate
+  const cacheTotal = (today.cacheReadTokens || 0) + (today.inputTokens || 0);
+  const cacheRate = cacheTotal > 0 ? Math.round((today.cacheReadTokens || 0) / cacheTotal * 100) : null;
+
   const items = [
     metricCard("Today Tokens", fmtShort(today.totalTokens),
       `${fmtNumber(today.totalTokens)} total · ${today.eventCount || 0} events`,
       { accent: "accent" }),
+    metricCard("Cache Hit Rate", cacheRate != null ? `${cacheRate}%` : "N/A",
+      `${fmtShort(today.cacheReadTokens || 0)} cached · ${fmtShort(today.inputTokens || 0)} new`,
+      { accent: cacheRate != null && cacheRate >= 80 ? "accent" : "" }),
     metricCard("Primary Limit", fmtPercent(primaryPct),
       limits.primary?.resets_at ? `Resets ${fmtCompactTime(limits.primary.resets_at)}` : "No sample",
       { accent: primaryClass }),
-    metricCard("Burn Rate", `${fmtNumber(burn.tokens_per_minute_15m)}/min`,
-      `${fmtShort(burn.tokens_15m)} tokens in 15m`,
-      {}),
     metricCard("Active Session", active.displayName || "None",
       `${active.projectName || ""} · ${envLabel(active)} · idle ${active.idle_minutes ?? "?"}m`,
       {}),
@@ -634,44 +638,45 @@ function drawModelChart(snapshot) {
   const chartW = W - pad.left - pad.right;
   const chartH = H - pad.top - pad.bottom;
 
-  const tokenMax = Math.max(...entries.map(([, u]) => u.totalTokens || 0), 1);
-  const eventMax = Math.max(...entries.map(([, u]) => u.eventCount || 0), 1);
+  const CACHE_COLOR = "#16a34a";   // dark green — cache hit
+  const CACHE_COLOR_HL = "#22c55e";
+  const INPUT_COLOR = "#4ade80";   // light green — new input
+  const INPUT_COLOR_HL = "#86efac";
+  const OUTPUT_COLOR = "#3b82f6";  // blue — output
+  const OUTPUT_COLOR_HL = "#60a5fa";
 
-  // Compute bar layout: pairs side by side
-  const barGap = 3;   // gap between token & request bar in same group (px)
+  // Find max total (cache + input + output) for Y-axis scale
+  const tokenMax = Math.max(...entries.map(([, u]) =>
+    (u.cacheReadTokens || 0) + (u.inputTokens || 0) + (u.outputTokens || 0)
+  ), 1);
+
+  // Single bar per model, stacked
+  const barW = Math.max(14, Math.min(50, (chartW / count) * 0.55));
   const groupStep = chartW / count;
-  const barPairW = Math.min(groupStep - 4, 40);
-  const barW = Math.max(5, (barPairW - barGap) / 2);
 
   const bars = entries.map(([model, usage], i) => {
-    const groupX = pad.left + i * groupStep + (groupStep - barPairW) / 2;
-    const tokenH = Math.max(2, (chartH * (usage.totalTokens || 0)) / tokenMax);
-    const eventH = Math.max(2, (chartH * (usage.eventCount || 0)) / eventMax);
+    const cacheH = Math.max(0, (chartH * (usage.cacheReadTokens || 0)) / tokenMax);
+    const inputH = Math.max(0, (chartH * (usage.inputTokens || 0)) / tokenMax);
+    const outputH = Math.max(0, (chartH * (usage.outputTokens || 0)) / tokenMax);
+    const totalH = cacheH + inputH + outputH;
+    const x = pad.left + i * groupStep + (groupStep - barW) / 2;
+    const baseY = pad.top + chartH;
     return {
-      token: {
-        x: groupX,
-        y: pad.top + chartH - tokenH,
-        w: barW,
-        h: tokenH,
-      },
-      request: {
-        x: groupX + barW + barGap,
-        y: pad.top + chartH - eventH,
-        w: barW,
-        h: eventH,
-      },
-      model,
-      tokens: usage.totalTokens || 0,
+      x, barW,
+      cache:  { y: baseY - totalH, h: cacheH },
+      input:  { y: baseY - totalH + cacheH, h: inputH },
+      output: { y: baseY - totalH + cacheH + inputH, h: outputH },
+      model, groupX: x, groupW: barW,
+      cacheTokens: usage.cacheReadTokens || 0,
+      inputTokens: usage.inputTokens || 0,
+      outputTokens: usage.outputTokens || 0,
+      totalTokens: (usage.cacheReadTokens || 0) + (usage.inputTokens || 0) + (usage.outputTokens || 0),
       requests: usage.eventCount || 0,
-      groupX,
-      groupW: barPairW,
     };
   });
 
   function draw(highlightIdx) {
     ctx.clearRect(0, 0, W, H);
-
-    // Background
     ctx.fillStyle = "#0b1120";
     ctx.fillRect(0, 0, W, H);
 
@@ -686,47 +691,42 @@ function drawModelChart(snapshot) {
       ctx.lineTo(W - pad.right, Math.round(y) + 0.5);
       ctx.stroke();
 
-      // Left Y-axis: tokens
       const tokenVal = tokenMax - (tokenMax * i) / gridLines;
-      ctx.fillStyle = TOKEN_COLOR;
+      ctx.fillStyle = "#64748b";
       ctx.font = "10px 'Fira Code', ui-monospace, monospace";
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
       ctx.fillText(fmtShort(tokenVal), pad.left - 8, Math.round(y));
-
-      // Right Y-axis: requests
-      const reqVal = eventMax - (eventMax * i) / gridLines;
-      ctx.fillStyle = REQUEST_COLOR;
-      ctx.textAlign = "left";
-      ctx.fillText(fmtShort(reqVal), W - pad.right + 8, Math.round(y));
     }
 
-    // Bars
+    // Stacked bars
     bars.forEach((bar, i) => {
       const isHL = highlightIdx === i;
+      const x = bar.x, w = bar.barW;
 
-      // Token bar (green)
-      const t = bar.token;
-      ctx.fillStyle = isHL ? TOKEN_COLOR_HL : TOKEN_COLOR;
-      ctx.fillRect(t.x, t.y, t.w, t.h);
-
-      // Request bar (blue)
-      const r = bar.request;
-      ctx.fillStyle = isHL ? REQUEST_COLOR_HL : REQUEST_COLOR;
-      ctx.fillRect(r.x, r.y, r.w, r.h);
-
-      // Value labels on top of bars (only if tall enough)
-      ctx.font = "9px 'Fira Code', ui-monospace, monospace";
-      ctx.textBaseline = "bottom";
-      if (t.h > 12) {
-        ctx.fillStyle = "#e2e8f0";
-        ctx.textAlign = "center";
-        ctx.fillText(fmtShort(bar.tokens), t.x + t.w / 2, t.y - 2);
+      // Cache hit segment (bottom, dark green)
+      if (bar.cache.h > 0.5) {
+        ctx.fillStyle = isHL ? CACHE_COLOR_HL : CACHE_COLOR;
+        ctx.fillRect(x, bar.cache.y, w, Math.max(1, bar.cache.h));
       }
-      if (r.h > 12) {
+      // New input segment (middle, light green)
+      if (bar.input.h > 0.5) {
+        ctx.fillStyle = isHL ? INPUT_COLOR_HL : INPUT_COLOR;
+        ctx.fillRect(x, bar.input.y, w, Math.max(1, bar.input.h));
+      }
+      // Output segment (top, blue)
+      if (bar.output.h > 0.5) {
+        ctx.fillStyle = isHL ? OUTPUT_COLOR_HL : OUTPUT_COLOR;
+        ctx.fillRect(x, bar.output.y, w, Math.max(1, bar.output.h));
+      }
+
+      // Total value label on top
+      if (bar.cache.h + bar.input.h + bar.output.h > 16) {
+        ctx.font = "9px 'Fira Code', ui-monospace, monospace";
+        ctx.textBaseline = "bottom";
         ctx.fillStyle = "#e2e8f0";
         ctx.textAlign = "center";
-        ctx.fillText(fmtShort(bar.requests), r.x + r.w / 2, r.y - 2);
+        ctx.fillText(fmtShort(bar.totalTokens), x + w / 2, bar.cache.y - 2);
       }
     });
 
@@ -735,39 +735,36 @@ function drawModelChart(snapshot) {
     ctx.textBaseline = "top";
     bars.forEach((bar, i) => {
       const isHL = highlightIdx === i;
-      ctx.fillStyle = isHL ? "#e2e8f0" : "#64748b";
-      ctx.font = `${isHL ? "bold " : ""}10px 'Fira Code', ui-monospace, monospace`;
-
-      // Truncate long model names
       let label = bar.model;
       if (label.length > 14) label = label.slice(0, 12) + "…";
+      ctx.fillStyle = isHL ? "#e2e8f0" : "#64748b";
+      ctx.font = `${isHL ? "bold " : ""}10px 'Fira Code', ui-monospace, monospace`;
       ctx.fillText(label, bar.groupX + bar.groupW / 2, pad.top + chartH + 8);
 
-      // Show short value below name
+      // Cache hit % below name
+      const cachePct = bar.totalTokens > 0 ? Math.round(bar.cacheTokens / bar.totalTokens * 100) : 0;
       ctx.fillStyle = isHL ? "#94a3b8" : "#475569";
       ctx.font = "8px 'Fira Code', ui-monospace, monospace";
-      ctx.fillText(fmtShort(bar.tokens), bar.groupX + bar.groupW / 2, pad.top + chartH + 22);
+      ctx.fillText(`${cachePct}% cache`, bar.groupX + bar.groupW / 2, pad.top + chartH + 22);
     });
 
-    // Legend — positioned well above the tallest bars (pad.top=42, legend ends at ~y=22)
+    // Legend
     const legendY = 6;
     ctx.font = "10px 'Fira Code', ui-monospace, monospace";
-    // Tokens legend
-    ctx.fillStyle = TOKEN_COLOR;
-    ctx.fillRect(pad.left, legendY, 10, 10);
-    ctx.fillStyle = "#94a3b8";
-    ctx.textAlign = "start";
     ctx.textBaseline = "middle";
-    ctx.fillText("Tokens", pad.left + 14, legendY + 5);
+    ctx.textAlign = "start";
 
-    // Requests legend
-    const reqLegendX = pad.left + 90;
-    ctx.fillStyle = REQUEST_COLOR;
-    ctx.fillRect(reqLegendX, legendY, 10, 10);
-    ctx.fillStyle = "#94a3b8";
-    ctx.textAlign = "start";
-    ctx.textBaseline = "middle";
-    ctx.fillText("Requests", reqLegendX + 14, legendY + 5);
+    let lx = pad.left;
+    ctx.fillStyle = CACHE_COLOR; ctx.fillRect(lx, legendY, 10, 10);
+    ctx.fillStyle = "#94a3b8"; ctx.fillText("Cache", lx + 14, legendY + 5);
+
+    lx += 60;
+    ctx.fillStyle = INPUT_COLOR; ctx.fillRect(lx, legendY, 10, 10);
+    ctx.fillStyle = "#94a3b8"; ctx.fillText("Input", lx + 14, legendY + 5);
+
+    lx += 60;
+    ctx.fillStyle = OUTPUT_COLOR; ctx.fillRect(lx, legendY, 10, 10);
+    ctx.fillStyle = "#94a3b8"; ctx.fillText("Output", lx + 14, legendY + 5);
   }
 
   draw(-1);
@@ -796,14 +793,17 @@ function drawModelChart(snapshot) {
     draw(bestIdx);
 
     const tx = bar.groupX + bar.groupW / 2;
-    const ty = Math.min(bar.token.y, bar.request.y) - 10;
+    const ty = bar.cache.y - 10;
+    const cachePct = bar.totalTokens > 0 ? Math.round(bar.cacheTokens / bar.totalTokens * 100) : 0;
 
     const modelLabel = bar.model === "others" ? "Others" : bar.model;
     tooltip.hidden = false;
     tooltip.innerHTML =
       `<div class="chart-tooltip-date">${esc(modelLabel)}</div>` +
-      `<div class="chart-tooltip-row"><span class="chart-tooltip-dot tokens"></span> Tokens: ${fmtNumber(bar.tokens)}</div>` +
-      `<div class="chart-tooltip-row"><span class="chart-tooltip-dot requests"></span> Requests: ${fmtNumber(bar.requests)}</div>`;
+      `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#16a34a"></span> Cache: ${fmtNumber(bar.cacheTokens)} (${cachePct}%)</div>` +
+      `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#4ade80"></span> Input: ${fmtNumber(bar.inputTokens)}</div>` +
+      `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#3b82f6"></span> Output: ${fmtNumber(bar.outputTokens)}</div>` +
+      `<div class="chart-tooltip-row"><span style="color:#64748b">Requests: ${fmtNumber(bar.requests)}</span></div>`;
     tooltip.style.left = tx + "px";
     tooltip.style.top = ty + "px";
   };
