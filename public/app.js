@@ -562,7 +562,7 @@ $("refreshLimits").addEventListener("click", () => {
 /* ── Render: Projects ────────────────────── */
 
 function renderProjects(snapshot) {
-  const projects = (snapshot.top_projects || []).slice(0, 6);
+  const projects = snapshot.top_projects || [];
   if (!projects.length) {
     $("projects").innerHTML = emptyState("No project data");
     return;
@@ -921,7 +921,7 @@ function renderSkills(snapshot) {
 /* ── Render: Top Sessions ────────────────── */
 
 function renderSessions(snapshot) {
-  const sessions = (snapshot.top_sessions || []).slice(0, 8);
+  const sessions = snapshot.top_sessions || [];
   if (!sessions.length) {
     $("sessions").innerHTML = emptyState("No session data");
     return;
