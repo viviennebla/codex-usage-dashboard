@@ -211,6 +211,39 @@ function startWeb(options) {
           // Expose device list for frontend
           merged.devices = Object.values(merged.source_devices || {});
 
+          // Merge source_status: keep the most recent last_activity per source across all devices
+          const mergedSS = {};
+          for (const [, { snapshot: devSnap }] of allDevices) {
+            const ss = devSnap?.source_status;
+            if (!ss) continue;
+            for (const [src, info] of Object.entries(ss)) {
+              if (!mergedSS[src]) {
+                mergedSS[src] = { ...info };
+              } else {
+                mergedSS[src].today_events += info.today_events || 0;
+                mergedSS[src].today_tokens += info.today_tokens || 0;
+                mergedSS[src].total_events += info.total_events || 0;
+                if (info.last_activity && (!mergedSS[src].last_activity || info.last_activity > mergedSS[src].last_activity)) {
+                  mergedSS[src].last_activity = info.last_activity;
+                }
+              }
+            }
+          }
+          // Recompute status based on merged data
+          const now = new Date();
+          for (const [src, s] of Object.entries(mergedSS)) {
+            const hoursSince = s.last_activity
+              ? Math.round((now - new Date(s.last_activity)) / 3600000 * 10) / 10
+              : Infinity;
+            s.hours_since_last = hoursSince === Infinity ? null : hoursSince;
+            s.status = hoursSince <= 1 ? "active"
+              : hoursSince <= 24 ? "recent"
+              : hoursSince <= 48 ? "idle"
+              : hoursSince <= 168 ? "stale"
+              : "expired";
+          }
+          merged.source_status = mergedSS;
+
           sendJson(res, 200, merged);
         } else {
           sendJson(res, 200, snapshot);

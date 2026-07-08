@@ -209,12 +209,20 @@ export function buildSnapshot(reports, options = {}) {
     }
   }
   for (const [src, s] of Object.entries(sourceStatus)) {
-    // Status: "active" if used today, "idle" if within 7 days, "expired" if >7d
+    // Hour-precise status:
+    //   active  — within 1 hour
+    //   recent  — within 24 hours
+    //   idle    — within 48 hours
+    //   stale   — within 7 days
+    //   expired — over 7 days
     const hoursSince = s.last_activity
-      ? (generatedAt - new Date(s.last_activity)) / 3600000
+      ? Math.round((generatedAt - new Date(s.last_activity)) / 3600000 * 10) / 10
       : Infinity;
-    s.status = s.today_events > 0 ? "active"
-      : hoursSince <= 168 ? "idle"
+    s.hours_since_last = hoursSince === Infinity ? null : hoursSince;
+    s.status = hoursSince <= 1 ? "active"
+      : hoursSince <= 24 ? "recent"
+      : hoursSince <= 48 ? "idle"
+      : hoursSince <= 168 ? "stale"
       : "expired";
     s.last_activity = s.last_activity || null;
   }

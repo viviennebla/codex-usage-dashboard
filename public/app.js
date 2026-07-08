@@ -132,18 +132,29 @@ function renderMetrics(snapshot) {
 
   $("metrics").innerHTML = items.join("");
 
-  // Source status badges
+  // Source status badges (hour-precise)
   const ss = snapshot.source_status || {};
   function sourceBadge(name, info) {
     if (!info || info.status === "unknown") return `<span class="badge badge-idle" title="No data">${name}: ?</span>`;
-    const cls = info.status === "active" ? "badge-active"
-      : info.status === "idle" ? "badge-idle"
-      : "badge-hit"; // expired
-    const label = info.status === "active" ? `${name}: active`
+    // status → color + label
+    const cls =
+      info.status === "active" ? "badge-active"   // green: <1h
+      : info.status === "recent" ? "badge-active"  // green: <24h
+      : info.status === "idle" ? "badge-idle"      // yellow: <48h
+      : info.status === "stale" ? "badge-near"     // orange: <7d
+      : "badge-hit";                                // red: >7d expired
+    const label =
+      info.status === "active" ? `${name}: active`
+      : info.status === "recent" ? `${name}: active`
       : info.status === "idle" ? `${name}: idle`
+      : info.status === "stale" ? `${name}: ⚠ stale`
       : `${name}: ⚠ expired`;
-    const lastSeen = info.last_activity ? `last seen ${fmtCompactTime(info.last_activity)}` : "never";
-    return `<span class="badge ${cls}" title="${lastSeen}">${label}</span>`;
+    const hours = info.hours_since_last;
+    const ago = hours != null
+      ? hours < 1 ? "just now" : hours < 24 ? `${Math.round(hours)}h ago` : `${Math.round(hours / 24)}d ago`
+      : "never";
+    const todayInfo = info.today_tokens > 0 ? ` · today ${fmtShort(info.today_tokens)} tokens` : "";
+    return `<span class="badge ${cls}" title="last seen ${ago}${todayInfo}">${label}</span>`;
   }
   const badges = `${sourceBadge("Codex", ss.codex)} ${sourceBadge("Claude", ss.claude)}`;
 
