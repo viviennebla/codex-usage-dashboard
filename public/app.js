@@ -1060,8 +1060,13 @@ $("syncSave").addEventListener("click", async () => {
 
   $("syncConnStatus").textContent = "Connecting…";
   try {
-    const res = await fetch(`${url.replace(/\/+$/, "")}/health`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // Proxy through local server to avoid CORS issues
+    const res = await fetch("/api/proxy-health", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ server: url }),
+    });
+    if (!res.ok) throw new Error(await res.text());
     syncServerUrl = url;
     syncToken = token;
     localStorage.setItem("syncServer", url);

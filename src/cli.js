@@ -306,6 +306,23 @@ function startWeb(options) {
         return;
       }
 
+      // ── POST /api/proxy-health ── proxy health check to remote server (avoids CORS)
+      if (req.method === "POST" && url.pathname === "/api/proxy-health") {
+        const body = await readRequestBody(req);
+        const serverUrl = body?.server;
+        if (!serverUrl) { sendError(res, 400, "Missing server"); return; }
+        try {
+          const remoteUrl = String(serverUrl).replace(/\/+$/, "");
+          const resp = await fetch(`${remoteUrl}/health`);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          sendJson(res, 200, data);
+        } catch (err) {
+          sendError(res, 502, `Cannot reach server: ${err.message}`);
+        }
+        return;
+      }
+
       // ── GET /api/sync-state ── return last push/pull times
       if (req.method === "GET" && url.pathname === "/api/sync-state") {
         const { readSyncState } = await import("./sync.js");
