@@ -373,8 +373,9 @@ function drawTrend(snapshot) {
 
   // ── Hover interaction ──
   canvas.onmousemove = function (e) {
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
 
     // Find closest bar by X position
     let bestIdx = -1;
@@ -385,7 +386,6 @@ function drawTrend(snapshot) {
       if (dist < bestDist) { bestDist = dist; bestIdx = i; }
     }
 
-    // Only show tooltip if within chart X-range (Y ranges vary by bar height, too restrictive)
     const inChart = mx >= pad.left && mx <= W - pad.right && my >= 0 && my <= H;
     if (!inChart || bestIdx < 0) {
       tooltip.hidden = true;
@@ -741,11 +741,11 @@ function drawModelChart(snapshot) {
       ctx.font = `${isHL ? "bold " : ""}10px 'Fira Code', ui-monospace, monospace`;
       ctx.fillText(label, bar.groupX + bar.groupW / 2, pad.top + chartH + 8);
 
-      // Cache hit % below name
+      // Request count + cache% below name
       const cachePct = bar.totalTokens > 0 ? Math.round(bar.cacheTokens / bar.totalTokens * 100) : 0;
       ctx.fillStyle = isHL ? "#94a3b8" : "#475569";
       ctx.font = "8px 'Fira Code', ui-monospace, monospace";
-      ctx.fillText(`${cachePct}% cache`, bar.groupX + bar.groupW / 2, pad.top + chartH + 22);
+      ctx.fillText(`${fmtShort(bar.requests)} req · ${cachePct}% cache`, bar.groupX + bar.groupW / 2, pad.top + chartH + 22);
     });
 
     // Legend
@@ -771,8 +771,9 @@ function drawModelChart(snapshot) {
 
   // ── Hover interaction ──
   canvas.onmousemove = function (e) {
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
 
     let bestIdx = -1;
     let bestDist = Infinity;
@@ -782,8 +783,7 @@ function drawModelChart(snapshot) {
       if (dist < bestDist) { bestDist = dist; bestIdx = i; }
     }
 
-    const inChart = mx >= pad.left && mx <= W - pad.right && my >= 0 && my <= H;
-    if (!inChart || bestIdx < 0 || bestDist > groupStep / 2 + 4) {
+    if (bestIdx < 0 || bestDist > groupStep / 2 + 4) {
       tooltip.hidden = true;
       draw(-1);
       return;
@@ -859,7 +859,7 @@ function renderSkills(snapshot) {
 /* ── Render: Top Sessions ────────────────── */
 
 function renderSessions(snapshot) {
-  const sessions = snapshot.top_sessions || [];
+  const sessions = (snapshot.top_sessions || []).slice(0, 8);
   if (!sessions.length) {
     $("sessions").innerHTML = emptyState("No session data");
     return;
@@ -1055,8 +1055,9 @@ function drawHeatmap(snapshot) {
 
   // ── Hover interaction ──
   canvas.onmousemove = function (e) {
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
     let found = null;
     for (const c of cells) {
       if (mx >= c.x - 2 && mx <= c.x + c.w + 2 && my >= c.y - 2 && my <= c.y + c.h + 2) {
