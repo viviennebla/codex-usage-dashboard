@@ -475,10 +475,12 @@ function startWeb(options) {
         })));
         const discovered = await discoverSourceDiagnostics(dirs);
 
-        // Include synced remote devices as sources
+        // Include synced remote devices as sources (exclude self)
         const devices = await readDeviceStates(stateDir);
+        const localId = hostname();
         const remoteSources = [];
         for (const [deviceId, { deviceName, snapshot }] of devices) {
+          if (deviceId === localId) continue; // skip own snapshots
           remoteSources.push({
             path: deviceId,
             normalized_path: deviceId,
