@@ -1327,16 +1327,26 @@ $("syncBtn").addEventListener("click", () => {
 
 $("trendPrev").addEventListener("click", () => {
   if (!latestSnapshot) return;
-  const views = trendViews(latestSnapshot);
-  trendViewIndex = (trendViewIndex - 1 + views.length) % views.length;
-  renderTrend(latestSnapshot);
+  const canvas = $("trend");
+  canvas.style.opacity = "0";
+  setTimeout(() => {
+    const views = trendViews(latestSnapshot);
+    trendViewIndex = (trendViewIndex - 1 + views.length) % views.length;
+    renderTrend(latestSnapshot);
+    canvas.style.opacity = "1";
+  }, 120);
 });
 
 $("trendNext").addEventListener("click", () => {
   if (!latestSnapshot) return;
-  const views = trendViews(latestSnapshot);
-  trendViewIndex = (trendViewIndex + 1) % views.length;
-  renderTrend(latestSnapshot);
+  const canvas = $("trend");
+  canvas.style.opacity = "0";
+  setTimeout(() => {
+    const views = trendViews(latestSnapshot);
+    trendViewIndex = (trendViewIndex + 1) % views.length;
+    renderTrend(latestSnapshot);
+    canvas.style.opacity = "1";
+  }, 120);
 });
 
 /* Heatmap month navigation */

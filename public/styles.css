@@ -288,6 +288,7 @@ body {
   width: 100%;
   height: auto;
   display: block;
+  transition: opacity 0.15s ease-out;
 }
 
 /* ── Chart Tooltip ───────────────────────── */
