@@ -1,36 +1,98 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Codex Usage Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="shell">
+    <div class="app">
       <header class="topbar">
-        <div>
-          <h1>Codex Usage</h1>
-          <p id="meta">Loading local usage snapshot...</p>
+        <div class="topbar-left">
+          <h1 class="logo">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+            Codex Usage
+          </h1>
+          <span class="topbar-status" id="meta">Loading…</span>
         </div>
-        <button id="refresh" type="button">Refresh</button>
+        <button id="refresh" type="button" class="btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+          Refresh
+        </button>
+        <button id="sourcesBtn" type="button" class="btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          Sources
+        </button>
+        <button id="sync" type="button" class="btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Sync
+        </button>
       </header>
 
-      <section class="metrics" id="metrics"></section>
-
-      <section class="panel">
+      <section class="panel sources-panel" id="sourcesPanel" style="display:none">
         <div class="panel-head">
-          <h2>Recent Days</h2>
-          <span>Token trend</span>
+          <h2>Data Sources</h2>
+          <span class="panel-sub" id="sourcesSummary"></span>
         </div>
-        <canvas id="trend" width="1100" height="260"></canvas>
+        <div id="sourcesList"></div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <input id="srcPath" placeholder="/path/to/.codex" style="flex:1;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
+          <select id="srcType" style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 8px;color:#e2e8f0;font:12px 'Fira Code',monospace"><option value="codex">Codex</option><option value="claude">Claude</option></select>
+          <button id="srcAdd" class="btn" style="white-space:nowrap">+ Add</button>
+        </div>
       </section>
 
-      <section class="grid">
+      <section class="metrics" id="metrics" aria-live="polite"></section>
+
+      <section class="panel chart-panel">
+        <div class="panel-head">
+          <h2>Token Trend</h2>
+          <span class="panel-sub">Last 14 days · tokens + API requests</span>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="trend" width="1200" height="280" aria-label="Daily token usage bar chart" role="img"></canvas>
+          <div class="chart-tooltip" id="chartTooltip" hidden></div>
+        </div>
+      </section>
+
+      <div class="grid">
+        <section class="panel heatmap-panel">
+          <div class="panel-head">
+            <h2>Activity</h2>
+            <div style="display:flex;align-items:center;gap:6px">
+              <button id="hmPrev" class="btn" style="font-size:11px;padding:2px 6px" title="Previous month">◀</button>
+              <span class="panel-sub" id="heatmapMonth">Loading…</span>
+              <button id="hmNext" class="btn" style="font-size:11px;padding:2px 6px" title="Next month">▶</button>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="heatmap" width="400" height="300" aria-label="Monthly contribution heatmap" role="img"></canvas>
+            <div class="chart-tooltip" id="heatmapTooltip" hidden></div>
+          </div>
+        </section>
+
         <section class="panel">
           <div class="panel-head">
-            <h2>Active Window</h2>
-            <span>Session and rate limits</span>
+            <h2>Model Breakdown</h2>
+            <span class="panel-sub">Tokens + API calls per model</span>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="modelsChart" width="800" height="360" aria-label="Model usage bar chart" role="img"></canvas>
+            <div class="chart-tooltip" id="modelsChartTooltip" hidden></div>
+          </div>
+          <div id="models"></div>
+        </section>
+      </div>
+
+      <div class="grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Active Session</h2>
+            <span class="panel-sub">Session &amp; rate limits</span>
           </div>
           <div id="active"></div>
         </section>
@@ -38,30 +100,36 @@
         <section class="panel">
           <div class="panel-head">
             <h2>Projects</h2>
-            <span>Usage by cwd</span>
+            <span class="panel-sub">Usage by workspace</span>
           </div>
           <div id="projects"></div>
         </section>
-      </section>
+      </div>
 
-      <section class="grid">
+      <div class="grid">
         <section class="panel">
           <div class="panel-head">
-            <h2>Model Distribution</h2>
-            <span>Session totals</span>
+            <h2>Skills</h2>
+            <span class="panel-sub">Tool calls by frequency</span>
           </div>
-          <div id="models"></div>
+          <div id="skills"></div>
         </section>
 
         <section class="panel">
           <div class="panel-head">
             <h2>Top Sessions</h2>
-            <span>Largest token consumers</span>
+            <span class="panel-sub">Largest consumers</span>
           </div>
           <div id="sessions"></div>
         </section>
-      </section>
-    </main>
+      </div>
+
+      <footer class="footer">
+        <span>Data from local Codex JSONL logs</span>
+        <span class="footer-dot">·</span>
+        <span id="footer-stats"></span>
+      </footer>
+    </div>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

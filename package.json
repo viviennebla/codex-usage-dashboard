@@ -8,6 +8,7 @@
     "snapshot": "node src/cli.js snapshot",
     "cli": "node src/cli.js cli",
     "web": "node src/cli.js web",
+    "sync": "node src/cli.js pull",
     "check": "node src/cli.js --help"
   },
   "engines": {

@@ -33,6 +33,7 @@ function sumModelBreakdown(rows) {
         outputTokens: 0,
         reasoningOutputTokens: 0,
         totalTokens: 0,
+        eventCount: 0,
         costUSD: null,
         isFallback: false,
       };
@@ -46,6 +47,31 @@ function sumModelBreakdown(rows) {
     }
   }
   return Object.fromEntries(models);
+}
+
+/**
+ * Count events per model from raw events.
+ * Returns { modelName: count, ... }
+ */
+function countEventsByModel(events) {
+  const counts = {};
+  for (const event of events) {
+    const model = event.model || "unknown";
+    counts[model] = (counts[model] || 0) + 1;
+  }
+  return counts;
+}
+
+/**
+ * Merge per-model event counts into a models object built by sumModelBreakdown.
+ */
+function mergeEventCounts(models, eventCounts) {
+  for (const [model, count] of Object.entries(eventCounts)) {
+    if (models[model]) {
+      models[model].eventCount = count;
+    }
+  }
+  return models;
 }
 
 function addDerived(row) {
@@ -146,7 +172,7 @@ export function buildSnapshot(reports, options = {}) {
   );
   const projectRows = (reports.projects?.projects || []).map(addDerived);
   const today = dailyRows.find((row) => row.date === todayKey(generatedAt));
-  const recentDays = dailyRows.slice(-14);
+  const recentDays = dailyRows.slice(-35); // 5 weeks for heatmap
   const latestRateLimitEvent = latestEventWithRateLimits(reports.events);
   const limits = latestRateLimitEvent?.rateLimits || null;
   const burnRate = buildBurnRate(reports.events, sessionRows[0] || null, generatedAt);
@@ -188,7 +214,11 @@ export function buildSnapshot(reports, options = {}) {
     top_sessions: topSessions,
     top_projects: topProjects,
     totals: reports.daily.totals || reports.sessions.totals || null,
-    models: sumModelBreakdown(sessionRows),
+    models: mergeEventCounts(
+      sumModelBreakdown(sessionRows),
+      countEventsByModel(reports.events),
+    ),
+    skills: reports.skills || [],
     forecast: buildForecast(recentDays),
     diagnostics: {
       files_read: reports.tool?.filesRead || 0,
