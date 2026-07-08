@@ -442,7 +442,19 @@ function startWeb(options) {
           findLatestLimits(join(home, ".claude", "projects")),
         ]);
 
-        const best = [codexResult, claudeResult]
+        // Also check synced device snapshots for newer limit data
+        const deviceCandidates = [];
+        const deviceStates = await readDeviceStates(stateDir);
+        for (const [, { snapshot: devSnap }] of deviceStates) {
+          if (devSnap?.limits && devSnap?.limit_updated_at) {
+            deviceCandidates.push({
+              rateLimits: devSnap.limits,
+              timestamp: devSnap.limit_updated_at,
+            });
+          }
+        }
+
+        const best = [codexResult, claudeResult, ...deviceCandidates]
           .filter(Boolean)
           .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))[0] || null;
 
@@ -458,10 +470,13 @@ function startWeb(options) {
         const limitAge = best?.timestamp
           ? Math.round((Date.now() - new Date(best.timestamp).getTime()) / 3600000 * 10) / 10
           : null;
+        // Determine source: local file scan or synced device
+        const fromDevice = deviceCandidates.includes(best);
         sendJson(res, 200, {
           limits,
           limit_updated_at: best?.timestamp || null,
           limit_age_hours: limitAge,
+          source: fromDevice ? "synced_device" : "local_scan",
           stale: limitAge !== null && limitAge > 1,
           generated_at: new Date().toISOString(),
         });

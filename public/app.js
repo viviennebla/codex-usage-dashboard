@@ -537,10 +537,11 @@ async function refreshLimitsOnly() {
       latestSnapshot.limit_updated_at = data.limit_updated_at;
     }
     renderActive(latestSnapshot || { limits: data.limits, limit_updated_at: data.limit_updated_at });
+    const srcLabel = data.source === "synced_device" ? " (from synced device)" : "";
     if (data.stale) {
-      toast(`Limits data is ${data.limit_age_hours}h old — use Codex once to refresh`, "error");
+      toast(`Limits data is ${data.limit_age_hours}h old${srcLabel} — use Codex once to refresh`, "error");
     } else {
-      toast("Limits refreshed", "success");
+      toast(`Limits refreshed${srcLabel}`, "success");
     }
   } catch (err) {
     toast("Limits refresh failed: " + err.message, "error");
