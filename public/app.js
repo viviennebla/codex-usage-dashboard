@@ -1544,6 +1544,7 @@ $("skillSyncCompare").addEventListener("click", async () => {
 
 $("skillSyncApply").addEventListener("click", async () => {
   const serverUrl = $("skillSyncServer").value.trim() || syncServerUrl;
+  const token = syncToken || localStorage.getItem("syncToken") || "";
   const pushNames = Object.entries(skillSyncSelections).filter(([, v]) => v === "push").map(([k]) => k);
   const pullNames = Object.entries(skillSyncSelections).filter(([, v]) => v === "pull").map(([k]) => k);
 
@@ -1559,7 +1560,7 @@ $("skillSyncApply").addEventListener("click", async () => {
       const res = await fetch("/api/skills/push", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ server: serverUrl, names: pushNames, token: syncToken }),
+        body: JSON.stringify({ server: serverUrl, names: pushNames, token }),
       });
       const data = await res.json();
       const ok = data.results?.filter((r) => r.ok).length || 0;
