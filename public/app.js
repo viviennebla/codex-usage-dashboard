@@ -1003,56 +1003,92 @@ async function refresh() {
   renderSessions(snapshot);
 }
 
-/* ── Sync from remote server ────────────── */
+/* ── Sync Panel ──────────────────────────── */
 
-async function syncFromServer() {
-  const btn = $("sync");
-  const originalText = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = "Syncing…";
-  $("meta").textContent = "Syncing…";
+let syncServerUrl = "";
+let syncToken = "";
 
+function loadSyncState() {
+  syncServerUrl = localStorage.getItem("syncServer") || "";
+  syncToken = localStorage.getItem("syncToken") || "";
+  $("syncServer").value = syncServerUrl;
+  $("syncToken").value = syncToken;
+  updateSyncTimes();
+}
+
+async function updateSyncTimes() {
   try {
-    // Prompt user for server URL
-    let serverUrl = localStorage.getItem("syncServer");
-    if (!serverUrl) {
-      serverUrl = prompt("Enter remote server URL:", serverUrl || "");
-      if (!serverUrl) {
-        btn.disabled = false;
-        btn.innerHTML = originalText;
-        $("meta").textContent = "Sync cancelled";
-        return;
-      }
-      localStorage.setItem("syncServer", serverUrl);
+    const res = await fetch("/api/sync-state");
+    if (!res.ok) return;
+    const state = await res.json();
+    $("syncLastPush").textContent = state.lastPushAt
+      ? `Last push: ${fmtCompactTime(state.lastPushAt)}`
+      : "Never pushed";
+    $("syncLastPull").textContent = state.lastPullAt
+      ? `Last pull: ${fmtCompactTime(state.lastPullAt)}`
+      : "Never pulled";
+    if (state.server && !syncServerUrl) {
+      syncServerUrl = state.server;
+      $("syncServer").value = state.server;
     }
+  } catch {}
+}
 
-    const response = await fetch("/api/sync", {
+$("syncSave").addEventListener("click", async () => {
+  const url = $("syncServer").value.trim();
+  const token = $("syncToken").value.trim();
+  if (!url) { $("syncConnStatus").textContent = "Enter a server URL"; return; }
+
+  $("syncConnStatus").textContent = "Connecting…";
+  try {
+    const res = await fetch(`${url.replace(/\/+$/, "")}/health`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    syncServerUrl = url;
+    syncToken = token;
+    localStorage.setItem("syncServer", url);
+    localStorage.setItem("syncToken", token);
+    $("syncConnStatus").innerHTML = `<span style="color:#22c55e">● connected</span>`;
+    updateSyncTimes();
+  } catch (err) {
+    $("syncConnStatus").innerHTML = `<span style="color:#ef4444">● ${esc(err.message)}</span>`;
+  }
+});
+
+$("syncPush").addEventListener("click", async () => {
+  if (!syncServerUrl) { $("syncStatus").textContent = "Save server first"; return; }
+  $("syncStatus").textContent = "Pushing…";
+  try {
+    const res = await fetch("/api/push-to-remote", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ server: serverUrl }),
+      body: JSON.stringify({ server: syncServerUrl, token: syncToken }),
     });
+    if (!res.ok) throw new Error(await res.text());
+    $("syncStatus").textContent = "Push OK ✓";
+    updateSyncTimes();
+  } catch (err) {
+    $("syncStatus").textContent = "Push failed: " + err.message;
+  }
+});
 
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-
-    const result = await response.json();
-    const parts = [result.message];
-    if (result.synced && result.synced.length > 0) {
-      parts.push("(" + result.synced.join(", ") + ")");
-    }
-    $("meta").textContent = parts.join(" ");
-    btn.disabled = false;
-    btn.innerHTML = originalText;
-
-    // Auto-refresh after sync
+$("syncPull").addEventListener("click", async () => {
+  if (!syncServerUrl) { $("syncStatus").textContent = "Save server first"; return; }
+  $("syncStatus").textContent = "Pulling…";
+  try {
+    const res = await fetch("/api/sync", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ server: syncServerUrl }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const result = await res.json();
+    $("syncStatus").textContent = result.message;
+    updateSyncTimes();
     await refresh();
   } catch (err) {
-    $("meta").textContent = "Sync failed: " + err.message;
-    btn.disabled = false;
-    btn.innerHTML = originalText;
+    $("syncStatus").textContent = "Pull failed: " + err.message;
   }
-}
+});
 
 /* ── Bootstrap ───────────────────────────── */
 
@@ -1062,10 +1098,14 @@ $("refresh").addEventListener("click", () => {
   });
 });
 
-$("sync").addEventListener("click", () => {
-  syncFromServer().catch((err) => {
-    $("meta").textContent = "Sync error: " + err.message;
-  });
+$("syncBtn").addEventListener("click", () => {
+  const panel = $("syncPanel");
+  if (panel.style.display === "none") {
+    panel.style.display = "";
+    loadSyncState();
+  } else {
+    panel.style.display = "none";
+  }
 });
 
 /* Heatmap month navigation */
@@ -1179,146 +1219,3 @@ async function removeSource(path, type) {
   }
 }
 
-/* ── Config Sync Panel ────────────────────── */
-
-let cfgSyncSelections = {}; // device_id -> boolean
-
-$("cfgSyncBtn").addEventListener("click", () => {
-  const panel = $("cfgSyncPanel");
-  if (panel.style.display === "none") {
-    panel.style.display = "";
-    // Pre-fill server URL from localStorage
-    const saved = localStorage.getItem("syncServer");
-    if (saved) $("cfgSyncServer").value = saved;
-    // Reset state
-    $("cfgSyncDevices").innerHTML = "";
-    $("cfgSyncLocal").innerHTML = "";
-    $("cfgSyncActions").style.display = "none";
-    $("cfgSyncSummary").textContent = "";
-  } else {
-    panel.style.display = "none";
-  }
-});
-
-$("cfgSyncCheck").addEventListener("click", async () => {
-  const serverUrl = $("cfgSyncServer").value.trim();
-  if (!serverUrl) {
-    $("cfgSyncSummary").textContent = "Enter a server URL first";
-    return;
-  }
-  localStorage.setItem("syncServer", serverUrl);
-
-  $("cfgSyncSummary").textContent = "Checking server…";
-  $("cfgSyncCheck").disabled = true;
-
-  try {
-    const res = await fetch("/api/sync-status", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ server: serverUrl }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-
-    // Show local state
-    const local = data.local || {};
-    $("cfgSyncLocal").innerHTML =
-      `<div style="padding:8px 0;border-top:1px solid #1e293b;margin-top:4px">
-        <div style="font-size:12px;color:#64748b;margin-bottom:4px">Local Snapshot</div>
-        <div style="font-size:13px"><span style="color:#94a3b8">Generated:</span> ${esc(local.generated_at || "N/A")}</div>
-        <div style="font-size:13px"><span style="color:#94a3b8">Today:</span> ${fmtNumber(local.today_tokens)} tokens</div>
-        <div style="font-size:13px"><span style="color:#94a3b8">Models:</span> ${local.models_count || 0} · <span style="color:#94a3b8">Skills:</span> ${local.skills_count || 0}</div>
-      </div>`;
-
-    // Show remote devices
-    const devices = data.devices || [];
-    if (!devices.length) {
-      $("cfgSyncDevices").innerHTML = `<div class="empty"><p>No devices found on server</p></div>`;
-      $("cfgSyncActions").style.display = "none";
-      $("cfgSyncSummary").textContent = "0 devices on server";
-      $("cfgSyncCheck").disabled = false;
-      return;
-    }
-
-    cfgSyncSelections = {};
-    const rows = devices.map((d) => {
-      const isNewer = d.is_newer;
-      cfgSyncSelections[d.device_id] = isNewer; // default: select if newer
-      const badge = isNewer
-        ? `<span class="badge badge-active" style="font-size:10px">newer</span>`
-        : `<span class="badge badge-idle" style="font-size:10px">older</span>`;
-      const checked = isNewer ? "checked" : "";
-      return `<label class="sync-device-row" style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #1e293b;cursor:pointer">
-        <input type="checkbox" ${checked} data-device="${esc(d.device_id)}" style="accent-color:#22c55e" />
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:600">${esc(d.device_name || d.device_id)} ${badge}</div>
-          <div style="font-size:11px;color:#64748b;font-family:monospace">${esc(d.generated_at || "N/A")} · ${fmtNumber(d.today_tokens)} tokens today</div>
-        </div>
-      </label>`;
-    });
-
-    $("cfgSyncDevices").innerHTML = rows.join("");
-    $("cfgSyncActions").style.display = "flex";
-    $("cfgSyncSummary").textContent = `${devices.length} device${devices.length !== 1 ? "s" : ""} on server`;
-
-    // Bind checkbox changes
-    $("cfgSyncDevices").querySelectorAll("input[type=checkbox]").forEach((cb) => {
-      cb.addEventListener("change", () => {
-        cfgSyncSelections[cb.dataset.device] = cb.checked;
-      });
-    });
-  } catch (err) {
-    $("cfgSyncSummary").textContent = "Error: " + err.message;
-    $("cfgSyncDevices").innerHTML = "";
-    $("cfgSyncActions").style.display = "none";
-  } finally {
-    $("cfgSyncCheck").disabled = false;
-  }
-});
-
-$("cfgSyncApply").addEventListener("click", async () => {
-  const serverUrl = $("cfgSyncServer").value.trim();
-  const selected = Object.entries(cfgSyncSelections).filter(([, v]) => v).map(([k]) => k);
-  if (!selected.length) {
-    $("cfgSyncSummary").textContent = "No devices selected";
-    return;
-  }
-
-  $("cfgSyncApply").disabled = true;
-  $("cfgSyncSummary").textContent = `Syncing ${selected.length} device(s)…`;
-
-  // Pull selected devices one by one via /api/sync with specific device filter
-  // For now, we use the existing /api/sync which pulls ALL devices, then we filter.
-  // Better: pull each selected device individually via /api/snapshot/:deviceId from remote
-  try {
-    let synced = 0;
-    let failed = 0;
-    for (const deviceId of selected) {
-      try {
-        // Fetch remote device snapshot through our server as proxy
-        const res = await fetch(`/api/sync-device`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ server: serverUrl, device_id: deviceId }),
-        });
-        if (res.ok) synced++;
-        else failed++;
-      } catch {
-        failed++;
-      }
-    }
-    $("cfgSyncSummary").textContent = `Synced ${synced} device(s)${failed ? `, ${failed} failed` : ""}`;
-    $("cfgSyncActions").style.display = "none";
-    $("cfgSyncPanel").style.display = "none";
-    // Refresh dashboard with merged data
-    await refresh();
-  } catch (err) {
-    $("cfgSyncSummary").textContent = "Sync failed: " + err.message;
-  } finally {
-    $("cfgSyncApply").disabled = false;
-  }
-});
-
-$("cfgSyncCancel").addEventListener("click", () => {
-  $("cfgSyncPanel").style.display = "none";
-});

@@ -278,11 +278,32 @@ function startWeb(options) {
           return;
         }
         const result = await pullFromServer(serverUrl);
+        // Record last pull time
+        const { readSyncState, writeSyncState } = await import("./sync.js");
+        const syncState = await readSyncState();
+        syncState.lastPullAt = new Date().toISOString();
+        syncState.server = serverUrl;
+        await writeSyncState(syncState);
+
         console.log(`[sync] ${result.message}`);
         sendJson(res, 200, {
           synced: result.synced,
           failed: result.failed,
           message: result.message,
+          lastPullAt: syncState.lastPullAt,
+        });
+        return;
+      }
+
+      // ── GET /api/sync-state ── return last push/pull times
+      if (req.method === "GET" && url.pathname === "/api/sync-state") {
+        const { readSyncState } = await import("./sync.js");
+        const state = await readSyncState();
+        sendJson(res, 200, {
+          server: state.server || null,
+          lastPushAt: state.lastPushAt || null,
+          lastPullAt: state.lastPullAt || null,
+          devices: state.devices || {},
         });
         return;
       }
@@ -332,6 +353,46 @@ function startWeb(options) {
           },
           devices: comparison,
         });
+        return;
+      }
+
+      // ── POST /api/push-to-remote ── push local snapshot to a remote sync server
+      if (req.method === "POST" && url.pathname === "/api/push-to-remote") {
+        const body = await readRequestBody(req);
+        const serverUrl = body?.server;
+        const token = body?.token || null;
+        const deviceId = body?.device || hostname();
+        if (!serverUrl) { sendError(res, 400, "Missing 'server'"); return; }
+
+        const snapshot = await createSnapshot(options);
+        const remoteUrl = String(serverUrl).replace(/\/+$/, "");
+        const headers = { "content-type": "application/json" };
+        if (token) headers.authorization = `Bearer ${token}`;
+
+        try {
+          const pushResp = await fetch(`${remoteUrl}/api/push`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ device_id: deviceId, device_name: deviceId, snapshot }),
+          });
+          if (!pushResp.ok) {
+            sendError(res, pushResp.status, `Remote server returned ${pushResp.status}`);
+            return;
+          }
+          const result = await pushResp.json();
+
+          // Record last push time
+          const { readSyncState, writeSyncState } = await import("./sync.js");
+          const syncState = await readSyncState();
+          syncState.lastPushAt = new Date().toISOString();
+          syncState.server = serverUrl;
+          await writeSyncState(syncState);
+
+          console.log(`[push-to-remote] pushed to ${remoteUrl} as ${deviceId}`);
+          sendJson(res, 200, { ok: true, device_id: result.device_id, lastPushAt: syncState.lastPushAt });
+        } catch (err) {
+          sendError(res, 502, `Cannot reach server: ${err.message}`);
+        }
         return;
       }
 

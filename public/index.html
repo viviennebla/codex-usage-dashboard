@@ -27,13 +27,9 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           Sources
         </button>
-        <button id="sync" type="button" class="btn">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          Sync
-        </button>
-        <button id="cfgSyncBtn" type="button" class="btn">
+        <button id="syncBtn" type="button" class="btn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          Config Sync
+          Sync
         </button>
       </header>
 
@@ -50,20 +46,33 @@
         </div>
       </section>
 
-      <section class="panel sync-panel" id="cfgSyncPanel" style="display:none">
+      <section class="panel sync-panel" id="syncPanel" style="display:none">
         <div class="panel-head">
-          <h2>Config Sync</h2>
-          <span class="panel-sub" id="cfgSyncSummary"></span>
+          <h2>Sync</h2>
+          <span class="panel-sub" id="syncStatus"></span>
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:12px">
-          <input id="cfgSyncServer" placeholder="http://your-server:34777" style="flex:1;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
-          <button id="cfgSyncCheck" class="btn" style="white-space:nowrap">Check Server</button>
+        <!-- Server binding -->
+        <div style="display:flex;gap:8px;margin-bottom:6px">
+          <input id="syncServer" placeholder="http://your-server:34777" style="flex:1;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
+          <input id="syncToken" placeholder="token (optional)" style="width:160px;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
         </div>
-        <div id="cfgSyncLocal"></div>
-        <div id="cfgSyncDevices"></div>
-        <div id="cfgSyncActions" style="display:none;margin-top:12px;display:flex;gap:8px">
-          <button id="cfgSyncApply" class="btn" style="background:#22c55e;color:#0b1120;border-color:#22c55e;font-weight:600">Apply Selected</button>
-          <button id="cfgSyncCancel" class="btn">Cancel</button>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+          <button id="syncSave" class="btn" style="white-space:nowrap">Save &amp; Connect</button>
+          <span id="syncConnStatus" style="font-size:11px;color:#64748b"></span>
+        </div>
+        <!-- Push / Pull -->
+        <div style="display:flex;gap:8px;margin-bottom:6px">
+          <button id="syncPush" class="btn" style="flex:1">▲ Push Local → Server</button>
+          <button id="syncPull" class="btn" style="flex:1">▼ Pull Server → Local</button>
+        </div>
+        <div style="font-size:11px;color:#64748b;font-family:monospace;margin-bottom:12px">
+          <span id="syncLastPush"></span>
+          <span style="margin:0 8px">│</span>
+          <span id="syncLastPull"></span>
+        </div>
+        <!-- Advanced: device management -->
+        <div id="syncDevicesSection" style="border-top:1px solid #1e293b;padding-top:8px;display:none">
+          <div id="syncDeviceList"></div>
         </div>
       </section>
 
