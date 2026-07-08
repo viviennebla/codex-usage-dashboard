@@ -191,7 +191,8 @@ const REQUEST_COLOR_HL = "#60a5fa";
 const REQUEST_COLOR_GLOW = "rgba(59, 130, 246, 0.15)";
 
 // Animation state for trend chart
-let trendPrevBars = null;
+let trendPrevHeights = null;
+let trendPrevLineYs = null;
 let trendAnimStart = 0;
 let trendAnimId = null;
 const TREND_ANIM_DURATION = 300;
@@ -237,6 +238,12 @@ function drawTrend(snapshot) {
       requests: row.eventCount || 0,
     };
   });
+
+  // Line: API request count (extracted for animation)
+  const linePoints = bars.map((bar) => ({
+    x: bar.x + bar.w / 2,
+    y: pad.top + chartH - Math.max(2, (chartH * (bar.requests || 0)) / requestMax),
+  }));
 
   const hitData = { bars, pad, step, chartW, chartH, tokenMax, requestMax, W, H };
 
@@ -304,12 +311,7 @@ function drawTrend(snapshot) {
       }
     });
 
-    // Line: API request count
-    const linePoints = bars.map((bar) => ({
-      x: bar.x + bar.w / 2,
-      y: pad.top + chartH - Math.max(2, (chartH * (bar.requests || 0)) / requestMax),
-    }));
-
+    // Line: API request count (use pre-computed linePoints)
     // Area fill
     if (linePoints.length > 1) {
       ctx.beginPath();
@@ -376,13 +378,19 @@ function drawTrend(snapshot) {
     ctx.fillText("Requests", reqLegendX + 18, legendY + 2);
   }
 
-  // Animation: interpolate bar heights from previous values
+  // Animation: interpolate bar heights + line Ys (only if same data count)
   const newHeights = bars.map((b) => b.h);
-  if (trendPrevBars && trendPrevBars.length === newHeights.length) {
+  const newLineYs = linePoints.map((p) => p.y);
+  const canAnimate = trendPrevHeights && trendPrevHeights.length === newHeights.length
+    && trendPrevLineYs && trendPrevLineYs.length === newLineYs.length;
+
+  if (canAnimate) {
     cancelAnimationFrame(trendAnimId);
     trendAnimStart = performance.now();
-    const startHeights = [...trendPrevBars];
+    const startHeights = [...trendPrevHeights];
+    const startLineYs = [...trendPrevLineYs];
     const targetHeights = [...newHeights];
+    const targetLineYs = [...newLineYs];
 
     function animate(now) {
       const elapsed = now - trendAnimStart;
@@ -392,19 +400,22 @@ function drawTrend(snapshot) {
         const h = startHeights[i] + (targetHeights[i] - startHeights[i]) * e;
         bars[i].h = h;
         bars[i].y = pad.top + chartH - h;
+        linePoints[i].y = startLineYs[i] + (targetLineYs[i] - startLineYs[i]) * e;
       }
       draw(-1);
       if (t < 1) {
         trendAnimId = requestAnimationFrame(animate);
       } else {
-        trendPrevBars = targetHeights;
+        trendPrevHeights = targetHeights;
+        trendPrevLineYs = targetLineYs;
         trendAnimId = null;
       }
     }
     trendAnimId = requestAnimationFrame(animate);
   } else {
     draw(-1);
-    trendPrevBars = newHeights;
+    trendPrevHeights = newHeights;
+    trendPrevLineYs = newLineYs;
   }
 
   // ── Hover interaction ──
