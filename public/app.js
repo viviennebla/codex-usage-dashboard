@@ -190,6 +190,14 @@ const REQUEST_COLOR = "#3b82f6";
 const REQUEST_COLOR_HL = "#60a5fa";
 const REQUEST_COLOR_GLOW = "rgba(59, 130, 246, 0.15)";
 
+// Animation state for trend chart
+let trendPrevBars = null;
+let trendAnimStart = 0;
+let trendAnimId = null;
+const TREND_ANIM_DURATION = 300;
+
+function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
 function drawTrend(snapshot) {
   const canvas = $("trend");
   const ctx = canvas.getContext("2d");
@@ -368,8 +376,36 @@ function drawTrend(snapshot) {
     ctx.fillText("Requests", reqLegendX + 18, legendY + 2);
   }
 
-  // Initial draw
-  draw(-1);
+  // Animation: interpolate bar heights from previous values
+  const newHeights = bars.map((b) => b.h);
+  if (trendPrevBars && trendPrevBars.length === newHeights.length) {
+    cancelAnimationFrame(trendAnimId);
+    trendAnimStart = performance.now();
+    const startHeights = [...trendPrevBars];
+    const targetHeights = [...newHeights];
+
+    function animate(now) {
+      const elapsed = now - trendAnimStart;
+      const t = Math.min(1, elapsed / TREND_ANIM_DURATION);
+      const e = easeOutCubic(t);
+      for (let i = 0; i < bars.length; i++) {
+        const h = startHeights[i] + (targetHeights[i] - startHeights[i]) * e;
+        bars[i].h = h;
+        bars[i].y = pad.top + chartH - h;
+      }
+      draw(-1);
+      if (t < 1) {
+        trendAnimId = requestAnimationFrame(animate);
+      } else {
+        trendPrevBars = targetHeights;
+        trendAnimId = null;
+      }
+    }
+    trendAnimId = requestAnimationFrame(animate);
+  } else {
+    draw(-1);
+    trendPrevBars = newHeights;
+  }
 
   // ── Hover interaction ──
   canvas.onmousemove = function (e) {
