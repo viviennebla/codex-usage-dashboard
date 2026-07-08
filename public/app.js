@@ -194,7 +194,7 @@ function drawTrend(snapshot) {
   const canvas = $("trend");
   const ctx = canvas.getContext("2d");
   const tooltip = $("chartTooltip");
-  const rows = snapshot.recent_days || [];
+  const rows = (snapshot.recent_days || []).slice(-30);
   const dpr = window.devicePixelRatio || 1;
 
   const rect = canvas.getBoundingClientRect();
