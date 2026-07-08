@@ -32,7 +32,7 @@ export async function writeSyncState(state) {
  * 3. Write each snapshot to state/<deviceId>.json.
  * 4. Record sync metadata in state/sync.json.
  *
- * @param {string} serverUrl e.g. "http://8.160.186.237:34777"
+ * @param {string} serverUrl e.g. "http://your-server:34777"
  * @returns {{ synced: string[], failed: {deviceId: string, error: string}[], message: string }}
  */
 export async function pullFromServer(serverUrl) {

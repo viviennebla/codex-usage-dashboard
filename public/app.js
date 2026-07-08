@@ -993,7 +993,7 @@ async function syncFromServer() {
     // Prompt user for server URL
     let serverUrl = localStorage.getItem("syncServer");
     if (!serverUrl) {
-      serverUrl = prompt("Enter remote server URL:", serverUrl || "http://8.160.186.237:34777");
+      serverUrl = prompt("Enter remote server URL:", serverUrl || "");
       if (!serverUrl) {
         btn.disabled = false;
         btn.innerHTML = originalText;
@@ -1155,3 +1155,147 @@ async function removeSource(path, type) {
     $("sourcesSummary").textContent = e.message;
   }
 }
+
+/* ── Config Sync Panel ────────────────────── */
+
+let cfgSyncSelections = {}; // device_id -> boolean
+
+$("cfgSyncBtn").addEventListener("click", () => {
+  const panel = $("cfgSyncPanel");
+  if (panel.style.display === "none") {
+    panel.style.display = "";
+    // Pre-fill server URL from localStorage
+    const saved = localStorage.getItem("syncServer");
+    if (saved) $("cfgSyncServer").value = saved;
+    // Reset state
+    $("cfgSyncDevices").innerHTML = "";
+    $("cfgSyncLocal").innerHTML = "";
+    $("cfgSyncActions").style.display = "none";
+    $("cfgSyncSummary").textContent = "";
+  } else {
+    panel.style.display = "none";
+  }
+});
+
+$("cfgSyncCheck").addEventListener("click", async () => {
+  const serverUrl = $("cfgSyncServer").value.trim();
+  if (!serverUrl) {
+    $("cfgSyncSummary").textContent = "Enter a server URL first";
+    return;
+  }
+  localStorage.setItem("syncServer", serverUrl);
+
+  $("cfgSyncSummary").textContent = "Checking server…";
+  $("cfgSyncCheck").disabled = true;
+
+  try {
+    const res = await fetch("/api/sync-status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ server: serverUrl }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+
+    // Show local state
+    const local = data.local || {};
+    $("cfgSyncLocal").innerHTML =
+      `<div style="padding:8px 0;border-top:1px solid #1e293b;margin-top:4px">
+        <div style="font-size:12px;color:#64748b;margin-bottom:4px">Local Snapshot</div>
+        <div style="font-size:13px"><span style="color:#94a3b8">Generated:</span> ${esc(local.generated_at || "N/A")}</div>
+        <div style="font-size:13px"><span style="color:#94a3b8">Today:</span> ${fmtNumber(local.today_tokens)} tokens</div>
+        <div style="font-size:13px"><span style="color:#94a3b8">Models:</span> ${local.models_count || 0} · <span style="color:#94a3b8">Skills:</span> ${local.skills_count || 0}</div>
+      </div>`;
+
+    // Show remote devices
+    const devices = data.devices || [];
+    if (!devices.length) {
+      $("cfgSyncDevices").innerHTML = `<div class="empty"><p>No devices found on server</p></div>`;
+      $("cfgSyncActions").style.display = "none";
+      $("cfgSyncSummary").textContent = "0 devices on server";
+      $("cfgSyncCheck").disabled = false;
+      return;
+    }
+
+    cfgSyncSelections = {};
+    const rows = devices.map((d) => {
+      const isNewer = d.is_newer;
+      cfgSyncSelections[d.device_id] = isNewer; // default: select if newer
+      const badge = isNewer
+        ? `<span class="badge badge-active" style="font-size:10px">newer</span>`
+        : `<span class="badge badge-idle" style="font-size:10px">older</span>`;
+      const checked = isNewer ? "checked" : "";
+      return `<label class="sync-device-row" style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #1e293b;cursor:pointer">
+        <input type="checkbox" ${checked} data-device="${esc(d.device_id)}" style="accent-color:#22c55e" />
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600">${esc(d.device_name || d.device_id)} ${badge}</div>
+          <div style="font-size:11px;color:#64748b;font-family:monospace">${esc(d.generated_at || "N/A")} · ${fmtNumber(d.today_tokens)} tokens today</div>
+        </div>
+      </label>`;
+    });
+
+    $("cfgSyncDevices").innerHTML = rows.join("");
+    $("cfgSyncActions").style.display = "flex";
+    $("cfgSyncSummary").textContent = `${devices.length} device${devices.length !== 1 ? "s" : ""} on server`;
+
+    // Bind checkbox changes
+    $("cfgSyncDevices").querySelectorAll("input[type=checkbox]").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        cfgSyncSelections[cb.dataset.device] = cb.checked;
+      });
+    });
+  } catch (err) {
+    $("cfgSyncSummary").textContent = "Error: " + err.message;
+    $("cfgSyncDevices").innerHTML = "";
+    $("cfgSyncActions").style.display = "none";
+  } finally {
+    $("cfgSyncCheck").disabled = false;
+  }
+});
+
+$("cfgSyncApply").addEventListener("click", async () => {
+  const serverUrl = $("cfgSyncServer").value.trim();
+  const selected = Object.entries(cfgSyncSelections).filter(([, v]) => v).map(([k]) => k);
+  if (!selected.length) {
+    $("cfgSyncSummary").textContent = "No devices selected";
+    return;
+  }
+
+  $("cfgSyncApply").disabled = true;
+  $("cfgSyncSummary").textContent = `Syncing ${selected.length} device(s)…`;
+
+  // Pull selected devices one by one via /api/sync with specific device filter
+  // For now, we use the existing /api/sync which pulls ALL devices, then we filter.
+  // Better: pull each selected device individually via /api/snapshot/:deviceId from remote
+  try {
+    let synced = 0;
+    let failed = 0;
+    for (const deviceId of selected) {
+      try {
+        // Fetch remote device snapshot through our server as proxy
+        const res = await fetch(`/api/sync-device`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ server: serverUrl, device_id: deviceId }),
+        });
+        if (res.ok) synced++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }
+    $("cfgSyncSummary").textContent = `Synced ${synced} device(s)${failed ? `, ${failed} failed` : ""}`;
+    $("cfgSyncActions").style.display = "none";
+    $("cfgSyncPanel").style.display = "none";
+    // Refresh dashboard with merged data
+    await refresh();
+  } catch (err) {
+    $("cfgSyncSummary").textContent = "Sync failed: " + err.message;
+  } finally {
+    $("cfgSyncApply").disabled = false;
+  }
+});
+
+$("cfgSyncCancel").addEventListener("click", () => {
+  $("cfgSyncPanel").style.display = "none";
+});

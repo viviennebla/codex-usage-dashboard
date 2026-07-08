@@ -105,9 +105,9 @@ function withinFilters(timestamp, options) {
 }
 
 function dayKey(timestamp, timezone) {
-  if (!timezone) return new Date(timestamp).toISOString().slice(0, 10);
+  const tz = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
+    timeZone: tz,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

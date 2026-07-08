@@ -262,6 +262,20 @@ body {
   /* constrained by grid column */
 }
 
+/* ── Sync Panel ──────────────────────────── */
+
+.sync-panel {
+  margin-bottom: var(--space-4);
+}
+
+.sync-device-row {
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.sync-device-row:hover {
+  background: var(--bg-hover);
+}
+
 .chart-panel {
   margin-bottom: var(--space-4);
 }

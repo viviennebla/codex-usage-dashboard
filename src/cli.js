@@ -188,10 +188,33 @@ function startWeb(options) {
         return;
       }
 
-      // ── GET /api/snapshot ── return local snapshot
+      // ── GET /api/snapshot ── return local snapshot merged with pulled devices
       if (req.method === "GET" && url.pathname === "/api/snapshot") {
         const snapshot = await createSnapshot(options);
-        sendJson(res, 200, snapshot);
+
+        // Merge pulled device snapshots into the view
+        const { readDeviceStates: readDevs } = await import("./state.js");
+        const devices = await readDevs(stateDir);
+        if (devices.size > 0) {
+          const { mergeSnapshots } = await import("./merge.js");
+          // Add local as a device entry
+          const allDevices = new Map(devices);
+          const localName = hostname();
+          allDevices.set(localName, { deviceName: localName, snapshot });
+          const merged = mergeSnapshots(allDevices);
+
+          // Carry over device-specific fields from local snapshot
+          merged.skills = snapshot.skills || [];
+          merged.limits = snapshot.limits || null;
+          merged.burn_rate = snapshot.burn_rate || null;
+          merged.active_session = snapshot.active_session || null;
+          // Expose device list for frontend
+          merged.devices = Object.values(merged.source_devices || {});
+
+          sendJson(res, 200, merged);
+        } else {
+          sendJson(res, 200, snapshot);
+        }
         return;
       }
 
@@ -228,6 +251,80 @@ function startWeb(options) {
           failed: result.failed,
           message: result.message,
         });
+        return;
+      }
+
+      // ── POST /api/sync-status ── compare local vs remote snapshots
+      if (req.method === "POST" && url.pathname === "/api/sync-status") {
+        const body = await readRequestBody(req);
+        const serverUrl = body?.server;
+        if (!serverUrl) { sendError(res, 400, "Missing 'server' in request body"); return; }
+
+        // Local snapshot
+        const localSnapshot = await createSnapshot(options);
+        const localTime = localSnapshot.generated_at ? new Date(localSnapshot.generated_at).getTime() : 0;
+
+        // Fetch remote device list
+        const remoteUrl = String(serverUrl).replace(/\/+$/, "");
+        let devices = [];
+        try {
+          const resp = await fetch(`${remoteUrl}/api/devices`);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          devices = await resp.json();
+        } catch (err) {
+          sendError(res, 502, `Cannot reach server: ${err.message}`);
+          return;
+        }
+
+        // Compare timestamps
+        const comparison = devices.map((d) => {
+          const remoteTime = d.generated_at ? new Date(d.generated_at).getTime() : 0;
+          return {
+            device_id: d.device_id,
+            device_name: d.device_name,
+            generated_at: d.generated_at,
+            today_tokens: d.today_tokens || 0,
+            is_newer: remoteTime > localTime,
+            is_older: remoteTime <= localTime,
+          };
+        });
+
+        sendJson(res, 200, {
+          local: {
+            generated_at: localSnapshot.generated_at,
+            today_tokens: localSnapshot.today?.totalTokens || 0,
+            total_tokens: localSnapshot.totals?.totalTokens || 0,
+            skills_count: localSnapshot.skills?.length || 0,
+            models_count: Object.keys(localSnapshot.models || {}).length,
+          },
+          devices: comparison,
+        });
+        return;
+      }
+
+      // ── POST /api/sync-device ── pull a single device snapshot from remote
+      if (req.method === "POST" && url.pathname === "/api/sync-device") {
+        const body = await readRequestBody(req);
+        const serverUrl = body?.server;
+        const deviceId = body?.device_id;
+        if (!serverUrl || !deviceId) {
+          sendError(res, 400, "Missing 'server' or 'device_id'");
+          return;
+        }
+        const remoteUrl = String(serverUrl).replace(/\/+$/, "");
+        try {
+          const resp = await fetch(`${remoteUrl}/api/snapshot/${encodeURIComponent(deviceId)}`);
+          if (!resp.ok) {
+            sendError(res, resp.status, `Remote error: ${resp.status}`);
+            return;
+          }
+          const snapshot = await resp.json();
+          await writeDeviceState(deviceId, deviceId, snapshot, stateDir);
+          console.log(`[sync-device] pulled ${deviceId}`);
+          sendJson(res, 200, { ok: true, device_id: deviceId });
+        } catch (err) {
+          sendError(res, 502, `Failed to fetch device: ${err.message}`);
+        }
         return;
       }
 

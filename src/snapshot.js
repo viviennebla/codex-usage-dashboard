@@ -1,7 +1,15 @@
 const SNAPSHOT_SCHEMA_VERSION = "0.2";
 
 function todayKey(now = new Date()) {
-  return now.toISOString().slice(0, 10);
+  // Use local timezone so "today" matches the daily row grouping
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function number(value) {
