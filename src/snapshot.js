@@ -232,6 +232,7 @@ export function buildSnapshot(reports, options = {}) {
 
   const latestRateLimitEvent = latestEventWithRateLimits(reports.events);
   const limits = latestRateLimitEvent?.rateLimits || null;
+  const limitUpdatedAt = latestRateLimitEvent?.timestamp || null;
   const burnRate = buildBurnRate(reports.events, sessionRows[0] || null, generatedAt);
   const activeSession = enrichActiveSession(sessionRows[0] || null, generatedAt, burnRate);
   const topSessions = [...sessionRows]
@@ -267,6 +268,7 @@ export function buildSnapshot(reports, options = {}) {
     source_status: sourceStatus,
     active_session: activeSession,
     limits,
+    limit_updated_at: limitUpdatedAt,
     burn_rate: burnRate,
     recent_days: recentDays,
     top_sessions: topSessions,

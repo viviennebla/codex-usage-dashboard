@@ -206,6 +206,7 @@ function startWeb(options) {
           // Carry over device-specific fields from local snapshot
           merged.skills = snapshot.skills || [];
           merged.limits = snapshot.limits || null;
+          merged.limit_updated_at = snapshot.limit_updated_at || null;
           merged.burn_rate = snapshot.burn_rate || null;
           merged.active_session = snapshot.active_session || null;
           // Expose device list for frontend

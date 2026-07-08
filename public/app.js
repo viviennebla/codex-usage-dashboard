@@ -397,23 +397,28 @@ function drawTrend(snapshot) {
 
 /* ── Render: Active Session & Limits ─────── */
 
-function limitRow(label, pct, windowMin, resetsAt, generatedAt, planType) {
-  const ratio = Math.max(0, Math.min(1, pct / 100));
-  const badge = limitBadge(pct);
-  const barClass = pct >= 90 ? "danger" : pct >= 70 ? "warn" : "";
+function limitRow(label, pct, windowMin, resetsAt, generatedAt, planType, limitUpdatedAt) {
+  // Detect stale/reset: if resets_at is already in the past, limit has been reset
+  const now = new Date();
+  const resetDate = resetsAt ? new Date(resetsAt) : null;
+  const hasReset = resetDate && resetDate < now;
 
-  // Calculate time progress through the rate-limit window
+  // If reset already happened, show 0% instead of stale data
+  const displayPct = hasReset ? 0 : pct;
+  const ratio = Math.max(0, Math.min(1, displayPct / 100));
+  const badge = hasReset ? "ok" : limitBadge(displayPct);
+  const barClass = displayPct >= 90 ? "danger" : displayPct >= 70 ? "warn" : "";
+
+  // Time progress
   let timePct = null;
   let paceNote = "";
-  if (resetsAt && windowMin) {
-    const resetDate = new Date(resetsAt);
-    const genDate = generatedAt ? new Date(generatedAt) : new Date();
+  if (resetsAt && windowMin && !hasReset) {
     const windowStart = new Date(resetDate.getTime() - windowMin * 60000);
-    const elapsed = (genDate - windowStart) / 60000;
+    const elapsed = (now - windowStart) / 60000;
     timePct = Math.max(0, Math.min(100, (elapsed / windowMin) * 100));
     if (timePct < 99) {
-      paceNote = pct > timePct + 5
-        ? ` · <span style="color:#f59e0b">⚠ ${(pct - timePct).toFixed(0)}% ahead of time</span>`
+      paceNote = displayPct > timePct + 5
+        ? ` · <span style="color:#f59e0b">⚠ ${(displayPct - timePct).toFixed(0)}% ahead of time</span>`
         : ` · <span style="color:#22c55e">on pace</span>`;
     }
   }
@@ -422,7 +427,18 @@ function limitRow(label, pct, windowMin, resetsAt, generatedAt, planType) {
     ? `<div class="bar-time-marker" style="left:${timePct}%" title="Time elapsed: ${timePct.toFixed(0)}%"></div>`
     : "";
 
-  const detail = `${windowMin ? windowMin + 'm window' : ''}${resetsAt ? ' · resets ' + fmtCompactTime(resetsAt) : ''}${planType ? ' · ' + planType : ''}${paceNote}`;
+  // Build detail line
+  let detail = `${windowMin ? windowMin + 'm window' : ''}`;
+  if (hasReset) {
+    detail += ` · <span style="color:#22c55e">reset ${fmtCompactTime(resetsAt)}</span>`;
+  } else if (resetsAt) {
+    detail += ` · resets ${fmtCompactTime(resetsAt)}`;
+  }
+  if (planType) detail += ` · ${planType}`;
+  if (limitUpdatedAt && hasReset) {
+    detail += ` · <span style="color:#64748b">data from ${fmtCompactTime(limitUpdatedAt)}</span>`;
+  }
+  detail += paceNote;
 
   return `<div class="row">
     <div>
@@ -431,10 +447,10 @@ function limitRow(label, pct, windowMin, resetsAt, generatedAt, planType) {
       <div class="bar-track">
         <div class="bar-fill${barClass ? " " + barClass : ""}" style="width:${ratio * 100}%"></div>
         ${timeMarker}
-        ${timePct != null && timePct < 99 ? `<div style="font-size:9px;color:var(--ink-muted);margin-top:2px">usage ${pct.toFixed(0)}% · time ${timePct.toFixed(0)}%</div>` : ""}
+        ${timePct != null && timePct < 99 ? `<div style="font-size:9px;color:var(--ink-muted);margin-top:2px">usage ${displayPct.toFixed(0)}% · time ${timePct.toFixed(0)}%</div>` : ""}
       </div>
     </div>
-    <div class="row-value">${fmtPercent(pct)}</div>
+    <div class="row-value">${hasReset ? '0%' : fmtPercent(displayPct)}</div>
   </div>`;
 }
 
@@ -442,6 +458,7 @@ function renderActive(snapshot) {
   const active = snapshot.active_session;
   const limits = snapshot.limits || {};
   const generatedAt = snapshot.generated_at || null;
+  const limitUpdatedAt = snapshot.limit_updated_at || null;
   const rows = [];
 
   if (active) {
@@ -464,6 +481,7 @@ function renderActive(snapshot) {
       limits.primary.resets_at,
       generatedAt,
       null,
+      limitUpdatedAt,
     ));
   }
 
@@ -475,6 +493,7 @@ function renderActive(snapshot) {
       limits.secondary.resets_at,
       generatedAt,
       null,
+      limitUpdatedAt,
     ));
   }
 
