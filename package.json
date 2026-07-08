@@ -1,17 +1,28 @@
 {
   "name": "codex-usage-dashboard",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Local Codex usage dashboard powered by native Codex JSONL logs.",
+  "version": "0.2.0",
+  "description": "Local Codex + Claude Code usage dashboard with cross-device sync. Zero dependencies.",
   "type": "module",
+  "bin": {
+    "codex-usage": "src/cli.js"
+  },
   "scripts": {
+    "start": "node src/cli.js web",
     "snapshot": "node src/cli.js snapshot",
     "cli": "node src/cli.js cli",
     "web": "node src/cli.js web",
-    "sync": "node src/cli.js pull",
-    "check": "node src/cli.js --help"
+    "push": "node src/cli.js push",
+    "pull": "node src/cli.js pull",
+    "register": "node src/cli.js register"
   },
+  "files": [
+    "src/",
+    "public/",
+    "README.md"
+  ],
   "engines": {
     "node": ">=20"
-  }
+  },
+  "keywords": ["codex", "claude", "usage", "dashboard", "token", "sync"],
+  "license": "MIT"
 }
