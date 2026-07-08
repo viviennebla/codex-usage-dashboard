@@ -3,6 +3,24 @@ import { basename, dirname, join, extname } from "node:path";
 
 export const DEFAULT_STATE_PATH = "state/latest.json";
 
+const RESERVED_STATE_FILES = new Set([
+  "latest.json",
+  "sync.json",
+]);
+
+function isSnapshotState(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Boolean(
+    value.schema_version ||
+    value.generated_at ||
+    value.totals ||
+    value.today ||
+    value.recent_days ||
+    value.activity_days ||
+    value.top_sessions
+  );
+}
+
 export async function writeStateFile(snapshot, path = DEFAULT_STATE_PATH) {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
@@ -34,11 +52,11 @@ export async function readDeviceStates(stateDir = "state") {
 
   for (const entry of entries) {
     if (!entry.isFile() || extname(entry.name) !== ".json") continue;
-    if (entry.name === "latest.json") continue; // skip local-only snapshot
+    if (RESERVED_STATE_FILES.has(entry.name)) continue;
     const deviceId = basename(entry.name, ".json");
     const path = join(stateDir, entry.name);
     const snapshot = await readStateFile(path);
-    if (snapshot) {
+    if (isSnapshotState(snapshot)) {
       devices.set(deviceId, {
         deviceId,
         deviceName: snapshot._device_name || deviceId,
