@@ -181,6 +181,47 @@ export function buildSnapshot(reports, options = {}) {
   const projectRows = (reports.projects?.projects || []).map(addDerived);
   const today = dailyRows.find((row) => row.date === todayKey(generatedAt));
   const recentDays = dailyRows.slice(-35); // 5 weeks for heatmap
+
+  // Per-source activity status (detect expired/inactive agents)
+  const todayStr = todayKey(generatedAt);
+  const sourceStatus = {};
+  for (const evt of reports.events) {
+    // Normalise source: Codex events come from "sessions"/"archived_sessions"/"codex-jsonl"
+    const raw = evt.source || "unknown";
+    const src = raw === "claude" ? "claude" : "codex";
+    sourceStatus[src] ||= {
+      total_events: 0,
+      today_events: 0,
+      today_tokens: 0,
+      last_activity: null,
+    };
+    const s = sourceStatus[src];
+    s.total_events++;
+    if (evt.timestamp) {
+      const evtDate = evt.timestamp.slice(0, 10);
+      if (evtDate === todayStr) {
+        s.today_events++;
+        s.today_tokens += evt.totalTokens || 0;
+      }
+      if (!s.last_activity || evt.timestamp > s.last_activity) {
+        s.last_activity = evt.timestamp;
+      }
+    }
+  }
+  for (const [src, s] of Object.entries(sourceStatus)) {
+    // Status: "active" if used today, "idle" if within 7 days, "expired" if >7d
+    const hoursSince = s.last_activity
+      ? (generatedAt - new Date(s.last_activity)) / 3600000
+      : Infinity;
+    s.status = s.today_events > 0 ? "active"
+      : hoursSince <= 168 ? "idle"
+      : "expired";
+    s.last_activity = s.last_activity || null;
+  }
+  // Ensure both codex and claude keys exist
+  sourceStatus.codex ||= { total_events: 0, today_events: 0, today_tokens: 0, last_activity: null, status: "unknown" };
+  sourceStatus.claude ||= { total_events: 0, today_events: 0, today_tokens: 0, last_activity: null, status: "unknown" };
+
   const latestRateLimitEvent = latestEventWithRateLimits(reports.events);
   const limits = latestRateLimitEvent?.rateLimits || null;
   const burnRate = buildBurnRate(reports.events, sessionRows[0] || null, generatedAt);
@@ -215,6 +256,7 @@ export function buildSnapshot(reports, options = {}) {
       timezone: options.timezone || null,
     },
     today: today || null,
+    source_status: sourceStatus,
     active_session: activeSession,
     limits,
     burn_rate: burnRate,

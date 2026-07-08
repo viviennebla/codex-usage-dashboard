@@ -131,11 +131,23 @@ function renderMetrics(snapshot) {
   ];
 
   $("metrics").innerHTML = items.join("");
-  const sources = snapshot.upstream?.sources || snapshot.diagnostics?.sources || null;
-  const sourceLabel = sources
-    ? Object.entries(sources).map(([k, v]) => `${k}(${v.events || v.filesRead || 0})`).join(" + ")
-    : snapshot.confidence;
-  $("meta").textContent = `${sourceLabel} · ${snapshot.generated_at}`;
+
+  // Source status badges
+  const ss = snapshot.source_status || {};
+  function sourceBadge(name, info) {
+    if (!info || info.status === "unknown") return `<span class="badge badge-idle" title="No data">${name}: ?</span>`;
+    const cls = info.status === "active" ? "badge-active"
+      : info.status === "idle" ? "badge-idle"
+      : "badge-hit"; // expired
+    const label = info.status === "active" ? `${name}: active`
+      : info.status === "idle" ? `${name}: idle`
+      : `${name}: ⚠ expired`;
+    const lastSeen = info.last_activity ? `last seen ${fmtCompactTime(info.last_activity)}` : "never";
+    return `<span class="badge ${cls}" title="${lastSeen}">${label}</span>`;
+  }
+  const badges = `${sourceBadge("Codex", ss.codex)} ${sourceBadge("Claude", ss.claude)}`;
+
+  $("meta").innerHTML = `${badges} <span style="margin-left:8px;color:#64748b;font-size:12px">· ${snapshot.generated_at}</span>`;
   $("footer-stats").textContent = `${snapshot.totals?.eventCount || snapshot.diagnostics?.events_read || 0} API calls · ${snapshot.diagnostics?.files_read || 0} files`;
 }
 
