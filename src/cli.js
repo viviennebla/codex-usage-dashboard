@@ -2,8 +2,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
-import { homedir, hostname } from "node:os";
-import { existsSync } from "node:fs";
+import { hostname } from "node:os";
 
 import { loadAllReports } from "./loader.js";
 import { formatCli } from "./format.js";
@@ -17,6 +16,7 @@ import {
 } from "./state.js";
 import { addDirectory, listDirectories, removeDirectory, readConfig } from "./config.js";
 import { pullFromServer } from "./sync.js";
+import { discoverSourceDiagnostics, inspectSource, sourceLabelMap } from "./sources.js";
 
 process.stdout.on("error", () => {});
 process.stderr.on("error", () => {});
@@ -467,20 +467,16 @@ function startWeb(options) {
       if (req.method === "GET" && url.pathname === "/api/sources") {
         const cfg = await readConfig();
         const dirs = cfg.directories || [];
-
-        // Filesystem discovery of default paths
-        const home = homedir();
-        const discovered = [];
-        const codexDefault = join(home, ".codex", "sessions");
-        const claudeDefault1 = join(home, ".claude", "projects");
-        const claudeDefault2 = join(home, ".config", "claude", "projects");
-
-        if (existsSync(codexDefault)) discovered.push({ path: codexDefault, type: "codex", label: "auto-detected" });
-        if (existsSync(claudeDefault1)) discovered.push({ path: claudeDefault1, type: "claude", label: "auto-detected" });
-        if (existsSync(claudeDefault2)) discovered.push({ path: claudeDefault2, type: "claude", label: "auto-detected" });
+        const labels = sourceLabelMap(dirs);
+        const registered = await Promise.all(dirs.map(async (dir) => ({
+          ...await inspectSource(dir.path, dir.type, labels),
+          origin: "registered",
+          addedAt: dir.addedAt || null,
+        })));
+        const discovered = await discoverSourceDiagnostics(dirs);
 
         sendJson(res, 200, {
-          registered: dirs,
+          registered,
           discovered,
         });
         return;
@@ -492,6 +488,9 @@ function startWeb(options) {
         if (!body || !body.path) { sendError(res, 400, "Missing path"); return; }
         const type = body.type === "claude" ? "claude" : "codex";
         const result = await addDirectory(body.path, type, body.label || null);
+        const labels = sourceLabelMap(result.config.directories || []);
+        const inspection = await inspectSource(body.path, type, labels);
+        result.inspection = { ...inspection, origin: "registered" };
         sendJson(res, result.added ? 201 : 200, result);
         return;
       }
@@ -592,12 +591,17 @@ async function registerDirectory(options) {
   }
 
   const result = await addDirectory(options.path, type, options.label || null);
+  const labels = sourceLabelMap(result.config.directories || []);
+  const inspection = await inspectSource(options.path, type, labels);
   if (result.added) {
     console.log(`Registered ${type} directory: ${options.path}`);
     if (options.label) console.log(`  Label: ${options.label}`);
   } else {
     console.log(`Already registered: ${options.path} (${result.reason})`);
   }
+  console.log(`  Status: ${inspection.status} - ${inspection.message}`);
+  console.log(`  Name: ${inspection.display_name}`);
+  console.log(`  Files: ${inspection.files_found}`);
 
   // Also print current registry
   const dirs = await listDirectories();

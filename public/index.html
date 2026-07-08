@@ -41,6 +41,7 @@
         <div id="sourcesList"></div>
         <div style="margin-top:12px;display:flex;gap:8px">
           <input id="srcPath" placeholder="/path/to/.codex" style="flex:1;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
+          <input id="srcLabel" placeholder="name" style="width:120px;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
           <select id="srcType" style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 8px;color:#e2e8f0;font:12px 'Fira Code',monospace"><option value="codex">Codex</option><option value="claude">Claude</option></select>
           <button id="srcAdd" class="btn" style="white-space:nowrap">+ Add</button>
         </div>
@@ -81,7 +82,11 @@
       <section class="panel chart-panel">
         <div class="panel-head">
           <h2>Token Trend</h2>
-          <span class="panel-sub">Last 14 days · tokens + API requests</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button id="trendPrev" class="btn" style="font-size:11px;padding:2px 6px" title="Previous source">↑</button>
+            <span class="panel-sub" id="trendViewLabel">total</span>
+            <button id="trendNext" class="btn" style="font-size:11px;padding:2px 6px" title="Next source">↓</button>
+          </div>
         </div>
         <div class="chart-wrap">
           <canvas id="trend" width="1200" height="280" aria-label="Daily token usage bar chart" role="img"></canvas>

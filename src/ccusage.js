@@ -1,19 +1,11 @@
 import { createReadStream } from "node:fs";
 import { access, readFile, readdir } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline";
+import { codexEnvironmentForHome, resolveCodexHomes } from "./sources.js";
 
 const DATE_ONLY = /^(\d{4})-?(\d{2})-?(\d{2})$/;
 const CODEX_GENERATED_DATE_DIR = /^\d{4}-\d{2}-\d{2}$/;
-const WSL_DISTRO_CANDIDATES = [
-  "Ubuntu-26.04",
-  "Ubuntu-24.04",
-  "Ubuntu-22.04",
-  "Ubuntu",
-  "Debian",
-];
-
 function number(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
 }
@@ -116,20 +108,6 @@ function dayKey(timestamp, timezone) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-function configuredCodexHomes() {
-  if (process.env.CODEX_HOME) {
-    return process.env.CODEX_HOME.split(sep === "\\" ? ";" : ":").filter(Boolean);
-  }
-  return [join(homedir(), ".codex")];
-}
-
-function splitList(value) {
-  return String(value || "")
-    .split(/[;,]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 function unique(values) {
   const seen = new Set();
   const out = [];
@@ -151,66 +129,13 @@ async function exists(path) {
   }
 }
 
-function wslDistroCandidates() {
-  return unique([
-    ...splitList(process.env.CODEX_WSL_DISTROS),
-    ...WSL_DISTRO_CANDIDATES,
-  ]);
-}
-
-async function discoverWslCodexHomes() {
-  if (process.platform !== "win32" || process.env.CODEX_USAGE_INCLUDE_WSL === "0") {
-    return [];
-  }
-
-  const homes = [];
-  for (const distro of wslDistroCandidates()) {
-    for (const base of ["\\\\wsl.localhost", "\\\\wsl$"]) {
-      const homeRoot = join(base, distro, "home");
-      let users = [];
-      try {
-        users = await readdir(homeRoot, { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      for (const user of users) {
-        if (!user.isDirectory()) continue;
-        const codexHome = join(homeRoot, user.name, ".codex");
-        if (await exists(codexHome)) homes.push(codexHome);
-      }
-      const rootCodexHome = join(base, distro, "root", ".codex");
-      if (await exists(rootCodexHome)) homes.push(rootCodexHome);
-      if (homes.some((home) => home.toLowerCase().includes(`\\${distro.toLowerCase()}\\`))) {
-        break;
-      }
-    }
-  }
-  return unique(homes);
-}
-
 async function codexHomes(options = {}) {
-  const homes = configuredCodexHomes();
-  if (!options.noWsl) {
-    homes.push(...await discoverWslCodexHomes());
-  }
-  return unique(homes);
+  if (options.codexHomes) return unique(options.codexHomes);
+  return resolveCodexHomes(options.configDirectories || [], options);
 }
 
-function codexHomeMeta(home) {
-  const normalized = home.replace(/\//g, "\\");
-  const wsl = normalized.match(/^\\\\wsl(?:\.localhost|\$)\\([^\\]+)\\(?:home\\([^\\]+)|root)\\\.codex/i);
-  if (!wsl) {
-    return {
-      environment: "windows",
-      distro: null,
-      user: null,
-    };
-  }
-  return {
-    environment: "wsl",
-    distro: wsl[1] || null,
-    user: wsl[2] || "root",
-  };
+function codexHomeMeta(home, labels, fallbackIndex) {
+  return codexEnvironmentForHome(home, labels, fallbackIndex);
 }
 
 async function walkJsonl(root, out = []) {
@@ -227,10 +152,10 @@ async function walkJsonl(root, out = []) {
   return out;
 }
 
-async function collectSessionFiles(homes) {
+async function collectSessionFiles(homes, labels = new Map()) {
   const files = new Map();
-  for (const home of homes) {
-    const meta = codexHomeMeta(home);
+  for (const [index, home] of homes.entries()) {
+    const meta = codexHomeMeta(home, labels, index + 1);
     for (const source of ["archived_sessions", "sessions"]) {
       const root = join(home, source);
       for (const file of await walkJsonl(root)) {
@@ -241,6 +166,10 @@ async function collectSessionFiles(homes) {
           root,
           codexHome: home,
           environment: meta.environment,
+          environmentId: meta.environmentId,
+          environmentKind: meta.environmentKind,
+          environmentLabel: meta.environmentLabel,
+          detectedName: meta.detectedName,
           distro: meta.distro,
           user: meta.user,
         });
@@ -438,6 +367,10 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
     source: fileInfo.source,
     sessionFile: relative(fileInfo.root, fileInfo.file).replace(/\\/g, "/"),
     environment: fileInfo.environment,
+    environmentId: fileInfo.environmentId,
+    environmentKind: fileInfo.environmentKind,
+    environmentLabel: fileInfo.environmentLabel,
+    detectedName: fileInfo.detectedName,
     distro: fileInfo.distro,
     user: fileInfo.user,
     cwd: null,
@@ -519,6 +452,10 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
       sourceFile: fileInfo.file,
       source: fileInfo.source,
       environment: fileInfo.environment,
+      environmentId: fileInfo.environmentId,
+      environmentKind: fileInfo.environmentKind,
+      environmentLabel: fileInfo.environmentLabel,
+      detectedName: fileInfo.detectedName,
       distro: fileInfo.distro,
       user: fileInfo.user,
       lineNumber,
@@ -607,7 +544,7 @@ function buildTotals(events) {
 
 export async function loadCodexReports(options = {}) {
   const homes = await codexHomes(options);
-  const files = await collectSessionFiles(homes);
+  const files = await collectSessionFiles(homes, options.sourceLabels || new Map());
   const sessionIndex = await loadSessionIndex(homes);
   const threadStateIndex = await loadThreadStateIndex(homes);
   const nestedEvents = await Promise.all(
@@ -635,6 +572,10 @@ export async function loadCodexReports(options = {}) {
       projectKind: event.projectKind,
       source: event.source,
       environment: event.environment,
+      environmentId: event.environmentId,
+      environmentKind: event.environmentKind,
+      environmentLabel: event.environmentLabel,
+      detectedName: event.detectedName,
       distro: event.distro,
       user: event.user,
     }),
@@ -649,6 +590,10 @@ export async function loadCodexReports(options = {}) {
       projectKind: event.projectKind,
       projectDisplaySource: event.projectDisplaySource,
       environment: event.environment,
+      environmentId: event.environmentId,
+      environmentKind: event.environmentKind,
+      environmentLabel: event.environmentLabel,
+      detectedName: event.detectedName,
       distro: event.distro,
       user: event.user,
     }),

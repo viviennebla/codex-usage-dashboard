@@ -1,8 +1,9 @@
 import { createReadStream } from "node:fs";
 import { access, readdir } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, hostname, platform } from "node:os";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
+import { normalizePathKey, stableId } from "./sources.js";
 
 const DATE_ONLY = /^(\d{4})-?(\d{2})-?(\d{2})$/;
 
@@ -68,7 +69,10 @@ function expandHome(path) {
  * Discover Claude Code project directories.
  * Sources: CLAUDE_CONFIG_DIR env var, ~/.config/claude, ~/.claude
  */
-async function discoverClaudeRoots() {
+async function discoverClaudeRoots(explicitRoots = null) {
+  if (Array.isArray(explicitRoots)) {
+    return [...new Set(explicitRoots)];
+  }
   const roots = [];
 
   if (process.env.CLAUDE_CONFIG_DIR) {
@@ -97,6 +101,19 @@ async function discoverClaudeRoots() {
   }
 
   return [...new Set(roots)];
+}
+
+function claudeEnvironmentForRoot(root, labels = new Map()) {
+  const key = normalizePathKey(root);
+  const kind = platform() === "darwin" ? "macos" : platform() === "win32" ? "windows" : platform();
+  const detectedName = kind === "windows" ? `windows-${hostname()}` : `${kind}-${hostname()}`;
+  return {
+    environment: detectedName,
+    environmentId: stableId("env", key || detectedName),
+    environmentKind: kind,
+    environmentLabel: labels.get(key) || detectedName,
+    detectedName,
+  };
 }
 
 /**
@@ -148,9 +165,10 @@ async function walkJsonl(root, out = []) {
 /**
  * Collect all Claude Code JSONL files across discovered projects.
  */
-async function collectClaudeFiles(roots) {
+async function collectClaudeFiles(roots, labels = new Map()) {
   const files = [];
   for (const root of roots) {
+    const env = claudeEnvironmentForRoot(root, labels);
     const projectsDir = join(root, "projects");
     if (!(await exists(projectsDir))) continue;
 
@@ -167,6 +185,11 @@ async function collectClaudeFiles(roots) {
           projectName: basename(projectPath),
           projectPath,
           claudeRoot: root,
+          environment: env.environment,
+          environmentId: env.environmentId,
+          environmentKind: env.environmentKind,
+          environmentLabel: env.environmentLabel,
+          detectedName: env.detectedName,
         });
       }
     }
@@ -287,7 +310,11 @@ async function parseClaudeFile(fileInfo, options) {
       projectDisplaySource: "cwd",
       sourceFile: fileInfo.file,
       source: "claude",
-      environment: process.platform,
+      environment: fileInfo.environment,
+      environmentId: fileInfo.environmentId,
+      environmentKind: fileInfo.environmentKind,
+      environmentLabel: fileInfo.environmentLabel,
+      detectedName: fileInfo.detectedName,
       distro: null,
       user: null,
       threadName: null,
@@ -405,7 +432,7 @@ function extractSkillCalls(events) {
  * Returns the same structure as loadCodexReports() for compatibility.
  */
 export async function loadClaudeReports(options = {}) {
-  const roots = await discoverClaudeRoots();
+  const roots = await discoverClaudeRoots(Object.hasOwn(options, "claudeRoots") ? options.claudeRoots : null);
   if (roots.length === 0) {
     return {
       daily: { daily: [], totals: blankAggregate() },
@@ -423,7 +450,7 @@ export async function loadClaudeReports(options = {}) {
     };
   }
 
-  const files = await collectClaudeFiles(roots);
+  const files = await collectClaudeFiles(roots, options.sourceLabels || new Map());
   const nestedEvents = await Promise.all(
     files.map((file) => parseClaudeFile(file, options)),
   );
@@ -455,6 +482,10 @@ export async function loadClaudeReports(options = {}) {
       projectKind: event.projectKind,
       source: event.source,
       environment: event.environment,
+      environmentId: event.environmentId,
+      environmentKind: event.environmentKind,
+      environmentLabel: event.environmentLabel,
+      detectedName: event.detectedName,
       distro: event.distro,
       user: event.user,
     }),
@@ -470,6 +501,10 @@ export async function loadClaudeReports(options = {}) {
       projectKind: event.projectKind,
       projectDisplaySource: event.projectDisplaySource,
       environment: event.environment,
+      environmentId: event.environmentId,
+      environmentKind: event.environmentKind,
+      environmentLabel: event.environmentLabel,
+      detectedName: event.detectedName,
       distro: event.distro,
       user: event.user,
       source: event.source,

@@ -12,8 +12,53 @@ function todayKey(now = new Date()) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+function dayKey(timestamp, timezone) {
+  const tz = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(timestamp));
+  const values = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function number(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function blankAggregate(extra = {}) {
+  return {
+    inputTokens: 0,
+    cacheReadTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: 0,
+    costUSD: null,
+    models: {},
+    eventCount: 0,
+    firstActivity: null,
+    lastActivity: null,
+    ...extra,
+  };
+}
+
+function addEventToAggregate(target, event) {
+  target.inputTokens += number(event.inputTokens);
+  target.cacheReadTokens += number(event.cacheReadTokens);
+  target.outputTokens += number(event.outputTokens);
+  target.reasoningOutputTokens += number(event.reasoningOutputTokens);
+  target.totalTokens += number(event.totalTokens);
+  target.eventCount += 1;
+  target.firstActivity =
+    !target.firstActivity || Date.parse(event.timestamp) < Date.parse(target.firstActivity)
+      ? event.timestamp
+      : target.firstActivity;
+  target.lastActivity =
+    !target.lastActivity || Date.parse(event.timestamp) > Date.parse(target.lastActivity)
+      ? event.timestamp
+      : target.lastActivity;
 }
 
 function tokenTotal(row) {
@@ -172,6 +217,67 @@ function buildForecast(recentDays) {
   };
 }
 
+function buildTrendRows(events, options = {}) {
+  const byDate = new Map();
+  for (const event of events) {
+    if (!event.timestamp) continue;
+    const date = dayKey(event.timestamp, options.timezone);
+    if (!byDate.has(date)) byDate.set(date, blankAggregate({ date }));
+    addEventToAggregate(byDate.get(date), event);
+  }
+  return [...byDate.values()]
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .map(addDerived);
+}
+
+function buildTrendViews(events, totalRows, today, totals, options = {}) {
+  const views = [{
+    id: "total",
+    label: "total",
+    display_name: "total",
+    recent_days: totalRows,
+    today,
+    totals,
+  }];
+
+  const groups = new Map();
+  for (const event of events || []) {
+    const id = event.environmentLabel || event.environment || event.environmentId || "unknown";
+    if (!groups.has(id)) {
+      groups.set(id, {
+        id,
+        label: event.environmentLabel || event.environment || event.detectedName || "unknown",
+        detected_name: event.detectedName || event.environment || "unknown",
+        environment: event.environment || "unknown",
+        environment_kind: event.environmentKind || "unknown",
+        events: [],
+      });
+    }
+    groups.get(id).events.push(event);
+  }
+
+  const todayDate = todayKey();
+  for (const group of groups.values()) {
+    const rows = buildTrendRows(group.events, options);
+    const groupToday = rows.find((row) => row.date === todayDate) || null;
+    const groupTotals = blankAggregate();
+    for (const event of group.events) addEventToAggregate(groupTotals, event);
+    views.push({
+      id: group.id,
+      label: group.label,
+      display_name: group.label,
+      detected_name: group.detected_name,
+      environment: group.environment,
+      environment_kind: group.environment_kind,
+      recent_days: rows.slice(-35),
+      today: groupToday,
+      totals: addDerived(groupTotals),
+    });
+  }
+
+  return views;
+}
+
 export function buildSnapshot(reports, options = {}) {
   const generatedAt = new Date();
   const dailyRows = (reports.daily.daily || []).map(addDerived);
@@ -180,7 +286,15 @@ export function buildSnapshot(reports, options = {}) {
   );
   const projectRows = (reports.projects?.projects || []).map(addDerived);
   const today = dailyRows.find((row) => row.date === todayKey(generatedAt));
-  const recentDays = dailyRows.slice(-35); // 5 weeks for heatmap
+  const recentDays = dailyRows.slice(-35); // compact trend window
+  const activityDays = dailyRows.slice(-93); // roughly three months for heatmap
+  const trendViews = buildTrendViews(
+    reports.events || [],
+    recentDays,
+    today || null,
+    reports.daily.totals || reports.sessions.totals || null,
+    options,
+  );
 
   // Per-source activity status (detect expired/inactive agents)
   const todayStr = todayKey(generatedAt);
@@ -271,6 +385,8 @@ export function buildSnapshot(reports, options = {}) {
     limit_updated_at: limitUpdatedAt,
     burn_rate: burnRate,
     recent_days: recentDays,
+    activity_days: activityDays,
+    trend_views: trendViews,
     top_sessions: topSessions,
     top_projects: topProjects,
     totals: reports.daily.totals || reports.sessions.totals || null,

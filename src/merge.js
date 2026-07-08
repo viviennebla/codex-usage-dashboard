@@ -80,6 +80,23 @@ function mergeDaily(deviceEntries, field) {
   return [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
+function mergeActivityDays(deviceEntries) {
+  const byDate = new Map();
+  for (const [, { snapshot }] of deviceEntries) {
+    const rows = snapshot?.activity_days || snapshot?.recent_days;
+    if (!rows || !Array.isArray(rows)) continue;
+    for (const row of rows) {
+      const date = row.date;
+      if (!date) continue;
+      if (!byDate.has(date)) {
+        byDate.set(date, { ...blankAggregate(), date });
+      }
+      addToAggregate(byDate.get(date), row);
+    }
+  }
+  return [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
 function mergeTotals(deviceEntries) {
   const totals = blankAggregate();
   for (const [, { snapshot }] of deviceEntries) {
@@ -119,6 +136,50 @@ function mergeTopItems(deviceEntries, field) {
   }
   items.sort((a, b) => number(b.totalTokens) - number(a.totalTokens));
   return items.slice(0, 24);
+}
+
+function buildTrendViews(deviceEntries, mergedRecentDays, mergedToday, mergedTotals) {
+  const views = [{
+    id: "total",
+    label: "total",
+    display_name: "total",
+    recent_days: mergedRecentDays,
+    today: mergedToday,
+    totals: mergedTotals,
+  }];
+
+  for (const [deviceId, { deviceName, snapshot }] of deviceEntries) {
+    const labelPrefix = deviceName || deviceId;
+    const subViews = Array.isArray(snapshot?.trend_views) ? snapshot.trend_views : [];
+    const usableSubViews = subViews.filter((view) => view?.id && view.id !== "total");
+    if (usableSubViews.length > 0) {
+      for (const view of usableSubViews) {
+        const label = view.display_name || view.label || labelPrefix;
+        views.push({
+          ...view,
+          id: `${deviceId}:${view.id}`,
+          device_id: deviceId,
+          device_name: labelPrefix,
+          label,
+          display_name: label,
+        });
+      }
+      continue;
+    }
+
+    views.push({
+      id: `${deviceId}:total`,
+      device_id: deviceId,
+      device_name: labelPrefix,
+      label: labelPrefix,
+      display_name: labelPrefix,
+      recent_days: snapshot?.recent_days || [],
+      today: snapshot?.today || null,
+      totals: snapshot?.totals || null,
+    });
+  }
+
+  return views;
 }
 
 function buildDeviceSummary(deviceId, deviceName, snapshot) {
@@ -191,18 +252,26 @@ export function mergeSnapshots(deviceEntries) {
       top_sessions: snapshot?.top_sessions || [],
       top_projects: snapshot?.top_projects || [],
       recent_days: snapshot?.recent_days || [],
+      activity_days: snapshot?.activity_days || snapshot?.recent_days || [],
     };
   }
+
+  const mergedToday = mergeToday(deviceEntries);
+  const mergedTotals = mergeTotals(deviceEntries);
+  const mergedRecentDays = mergeDaily(deviceEntries, "recent_days");
+  const mergedActivityDays = mergeActivityDays(deviceEntries);
 
   const merged = {
     schema_version: "0.3",
     generated_at: new Date().toISOString(),
     device_count: deviceEntries.size,
     source_devices: sourceDevices,
-    today: mergeToday(deviceEntries),
-    totals: mergeTotals(deviceEntries),
+    today: mergedToday,
+    totals: mergedTotals,
     models: mergeModels(deviceEntries),
-    recent_days: mergeDaily(deviceEntries, "recent_days"),
+    recent_days: mergedRecentDays,
+    activity_days: mergedActivityDays.length > 0 ? mergedActivityDays : mergedRecentDays,
+    trend_views: buildTrendViews(deviceEntries, mergedRecentDays, mergedToday, mergedTotals),
     top_sessions: mergeTopItems(deviceEntries, "top_sessions"),
     top_projects: mergeTopItems(deviceEntries, "top_projects"),
     per_device: perDevice,

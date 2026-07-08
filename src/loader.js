@@ -1,6 +1,7 @@
 import { loadCodexReports } from "./ccusage.js";
 import { loadClaudeReports } from "./claude.js";
 import { readConfig } from "./config.js";
+import { resolveCodexHomes, resolveClaudeRoots, sourceLabelMap } from "./sources.js";
 
 function blankAggregate(extra = {}) {
   return {
@@ -157,25 +158,17 @@ function mergeSkillStats(skillLists) {
  * Load all available usage reports (Codex + Claude Code).
  */
 export async function loadAllReports(options = {}) {
-  // Inject registered directories
   const cfg = await readConfig();
-  const registeredCodex = cfg.directories.filter((d) => d.type === "codex").map((d) => d.path);
-  const registeredClaude = cfg.directories.filter((d) => d.type === "claude").map((d) => d.path);
-
-  if (registeredCodex.length > 0) {
-    const existing = process.env.CODEX_HOME || "";
-    const merged = [...new Set([...existing.split(/[:;]/).filter(Boolean), ...registeredCodex])];
-    process.env.CODEX_HOME = merged.join(":");
-  }
-  if (registeredClaude.length > 0) {
-    const existing = process.env.CLAUDE_CONFIG_DIR || "";
-    const merged = [...new Set([...existing.split(/[,;]/).filter(Boolean), ...registeredClaude])];
-    process.env.CLAUDE_CONFIG_DIR = merged.join(",");
-  }
+  const directories = cfg.directories || [];
+  const sourceLabels = sourceLabelMap(directories);
+  const [codexHomes, claudeRoots] = await Promise.all([
+    resolveCodexHomes(directories, { ...options, includeDefaults: false }),
+    resolveClaudeRoots(directories),
+  ]);
 
   const [codex, claude] = await Promise.all([
-    loadCodexReports(options),
-    loadClaudeReports(options),
+    loadCodexReports({ ...options, codexHomes, sourceLabels }),
+    loadClaudeReports({ ...options, claudeRoots, sourceLabels }),
   ]);
 
   const allEvents = [...(codex.events || []), ...(claude.events || [])].sort(
@@ -198,6 +191,10 @@ export async function loadAllReports(options = {}) {
       projectKind: event.projectKind,
       source: event.source,
       environment: event.environment,
+      environmentId: event.environmentId,
+      environmentKind: event.environmentKind,
+      environmentLabel: event.environmentLabel,
+      detectedName: event.detectedName,
       distro: event.distro,
       user: event.user,
     }),
@@ -213,6 +210,10 @@ export async function loadAllReports(options = {}) {
       projectKind: event.projectKind,
       projectDisplaySource: event.projectDisplaySource,
       environment: event.environment,
+      environmentId: event.environmentId,
+      environmentKind: event.environmentKind,
+      environmentLabel: event.environmentLabel,
+      detectedName: event.detectedName,
       distro: event.distro,
       user: event.user,
       source: event.source,

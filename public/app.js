@@ -844,7 +844,7 @@ function drawHeatmap(snapshot) {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
   const tooltip = $("heatmapTooltip");
-  const rows = snapshot.recent_days || [];
+  const rows = snapshot.activity_days || snapshot.recent_days || [];
   const dpr = window.devicePixelRatio || 1;
 
   const rect = canvas.getBoundingClientRect();
@@ -870,35 +870,48 @@ function drawHeatmap(snapshot) {
     return 4;
   }
 
-  // ── GitHub-style: columns = weeks, rows = days (Mon 0 … Sun 6) ──
-  const firstDay = new Date(hmYear, hmMonth, 1);
-  const lastDay = new Date(hmYear, hmMonth + 1, 0);
-  const daysInMonth = lastDay.getDate();
+  function monthMeta(year, month) {
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    let startDow = firstDay.getDay();
+    startDow = startDow === 0 ? 6 : startDow - 1;
+    const daysInMonth = lastDay.getDate();
+    return {
+      year,
+      month,
+      startDow,
+      daysInMonth,
+      cols: Math.ceil((startDow + daysInMonth) / 7),
+    };
+  }
 
-  // Day of week for 1st: convert Sun=0 to Mon=0
-  let startDow = firstDay.getDay(); // 0=Sun … 6=Sat
-  startDow = startDow === 0 ? 6 : startDow - 1; // → 0=Mon … 6=Sun
+  const months = [];
+  for (let offset = 2; offset >= 0; offset -= 1) {
+    const date = new Date(hmYear, hmMonth - offset, 1);
+    months.push(monthMeta(date.getFullYear(), date.getMonth()));
+  }
 
-  const numCols = Math.ceil((startDow + daysInMonth) / 7); // weeks in month
-  const numRows = 7; // Mon … Sun
+  const numRows = 7;
 
   // Layout
   const labelW = 18;
-  const topH = 4;
+  const topH = 20;
   const legendH = 22;
   const cellGap = 3;
-  const maxCellSize = 22;
+  const maxCellSize = 18;
   const rightPad = 8;
+  const monthGap = 14;
+  const totalCols = months.reduce((sum, month) => sum + month.cols, 0);
 
-  const availableW = W - labelW - rightPad - 4;
-  const rawStep = Math.floor(availableW / numCols);
-  const cellStep = Math.min(rawStep, maxCellSize + cellGap);
-  const cellSize = cellStep - cellGap;
+  const availableW = W - labelW - rightPad - 4 - monthGap * (months.length - 1);
+  const rawStep = Math.floor(availableW / Math.max(1, totalCols));
+  const cellStep = Math.max(7, Math.min(rawStep, maxCellSize + cellGap));
+  const cellSize = Math.max(4, cellStep - cellGap);
 
   // Center the grid horizontally
-  const gridW = numCols * cellStep;
+  const gridW = totalCols * cellStep + monthGap * (months.length - 1);
   const gridH = numRows * cellStep;
-  const gridLeft = labelW + 4 + Math.floor((availableW - gridW) / 2);
+  const gridLeft = labelW + 4 + Math.max(0, Math.floor((W - labelW - rightPad - 4 - gridW) / 2));
   const gridTop = topH;
 
   // Canvas dimensions
@@ -923,38 +936,49 @@ function drawHeatmap(snapshot) {
 
   // ── Draw cells ──
   const cells = [];
-  for (let col = 0; col < numCols; col++) {
-    for (let row = 0; row < numRows; row++) {
-      const dayNum = col * 7 + row - startDow + 1; // 1-based
-      if (dayNum < 1 || dayNum > daysInMonth) continue;
+  let monthLeft = gridLeft;
+  for (const month of months) {
+    const monthW = month.cols * cellStep;
+    ctx.font = "10px 'Fira Code', ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText(`${MONTHS_FULL[month.month].slice(0, 3)} ${month.year}`, monthLeft + monthW / 2, 2);
 
-      const x = gridLeft + col * cellStep;
-      const y = gridTop + row * cellStep;
+    for (let col = 0; col < month.cols; col++) {
+      for (let row = 0; row < numRows; row++) {
+        const dayNum = col * 7 + row - month.startDow + 1;
+        if (dayNum < 1 || dayNum > month.daysInMonth) continue;
 
-      const mm = String(hmMonth + 1).padStart(2, "0");
-      const dd = String(dayNum).padStart(2, "0");
-      const dateStr = `${hmYear}-${mm}-${dd}`;
+        const x = monthLeft + col * cellStep;
+        const y = gridTop + row * cellStep;
 
-      const tokens = dateMap.get(dateStr) || 0;
-      const level = getLevel(tokens);
+        const mm = String(month.month + 1).padStart(2, "0");
+        const dd = String(dayNum).padStart(2, "0");
+        const dateStr = `${month.year}-${mm}-${dd}`;
 
-      const r = Math.min(3, cellSize / 3);
-      ctx.fillStyle = HEAT_COLORS[level];
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.lineTo(x + cellSize - r, y);
-      ctx.quadraticCurveTo(x + cellSize, y, x + cellSize, y + r);
-      ctx.lineTo(x + cellSize, y + cellSize - r);
-      ctx.quadraticCurveTo(x + cellSize, y + cellSize, x + cellSize - r, y + cellSize);
-      ctx.lineTo(x + r, y + cellSize);
-      ctx.quadraticCurveTo(x, y + cellSize, x, y + cellSize - r);
-      ctx.lineTo(x, y + r);
-      ctx.quadraticCurveTo(x, y, x + r, y);
-      ctx.closePath();
-      ctx.fill();
+        const tokens = dateMap.get(dateStr) || 0;
+        const level = getLevel(tokens);
 
-      cells.push({ x, y, w: cellSize, h: cellSize, date: dateStr, tokens });
+        const r = Math.min(3, cellSize / 3);
+        ctx.fillStyle = HEAT_COLORS[level];
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + cellSize - r, y);
+        ctx.quadraticCurveTo(x + cellSize, y, x + cellSize, y + r);
+        ctx.lineTo(x + cellSize, y + cellSize - r);
+        ctx.quadraticCurveTo(x + cellSize, y + cellSize, x + cellSize - r, y + cellSize);
+        ctx.lineTo(x + r, y + cellSize);
+        ctx.quadraticCurveTo(x, y + cellSize, x, y + cellSize - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+        ctx.fill();
+
+        cells.push({ x, y, w: cellSize, h: cellSize, date: dateStr, tokens });
+      }
     }
+    monthLeft += monthW + monthGap;
   }
 
   // ── Color legend ("Less … More") ──
@@ -1001,25 +1025,76 @@ function drawHeatmap(snapshot) {
   canvas.onmouseleave = function () { tooltip.hidden = true; };
 
   // Update month label
-  $("heatmapMonth").textContent = MONTHS_FULL[hmMonth] + " " + hmYear;
+  const first = months[0];
+  const last = months[months.length - 1];
+  $("heatmapMonth").textContent = `${MONTHS_FULL[first.month].slice(0, 3)} ${first.year} - ${MONTHS_FULL[last.month].slice(0, 3)} ${last.year}`;
 }
 
 /* ── Main Refresh ────────────────────────── */
+
+let latestSnapshot = null;
+let trendViewIndex = 0;
+let sourcePromptShown = false;
+
+function trendViews(snapshot) {
+  const views = snapshot?.trend_views;
+  if (Array.isArray(views) && views.length > 0) return views;
+  return [{
+    id: "total",
+    label: "total",
+    display_name: "total",
+    recent_days: snapshot?.recent_days || [],
+    today: snapshot?.today || null,
+    totals: snapshot?.totals || null,
+  }];
+}
+
+function selectedTrendSnapshot(snapshot) {
+  const views = trendViews(snapshot);
+  if (trendViewIndex >= views.length) trendViewIndex = 0;
+  const view = views[trendViewIndex] || views[0];
+  return {
+    ...snapshot,
+    recent_days: view.recent_days || [],
+    today: view.today || null,
+    totals: view.totals || null,
+  };
+}
+
+function renderTrend(snapshot) {
+  const views = trendViews(snapshot);
+  if (trendViewIndex >= views.length) trendViewIndex = 0;
+  const view = views[trendViewIndex] || views[0];
+  $("trendViewLabel").textContent = view.display_name || view.label || "total";
+  drawTrend(selectedTrendSnapshot(snapshot));
+}
 
 async function refresh() {
   $("meta").textContent = "Refreshing…";
   const response = await fetch("/api/snapshot", { cache: "no-store" });
   if (!response.ok) throw new Error(await response.text());
   const snapshot = await response.json();
+  latestSnapshot = snapshot;
 
   renderMetrics(snapshot);
   drawHeatmap(snapshot);
-  drawTrend(snapshot);
+  renderTrend(snapshot);
   renderActive(snapshot);
   renderProjects(snapshot);
   renderModels(snapshot);
   renderSkills(snapshot);
   renderSessions(snapshot);
+  maybePromptSourceImport(snapshot);
+}
+
+async function maybePromptSourceImport(snapshot) {
+  if (sourcePromptShown) return;
+  const eventCount = snapshot.totals?.eventCount || snapshot.diagnostics?.events_read || 0;
+  if (eventCount > 0) return;
+  sourcePromptShown = true;
+  const panel = $("sourcesPanel");
+  panel.style.display = "";
+  await loadSources("Confirm detected sources to import");
 }
 
 /* ── Sync Panel ──────────────────────────── */
@@ -1132,6 +1207,20 @@ $("syncBtn").addEventListener("click", () => {
   }
 });
 
+$("trendPrev").addEventListener("click", () => {
+  if (!latestSnapshot) return;
+  const views = trendViews(latestSnapshot);
+  trendViewIndex = (trendViewIndex - 1 + views.length) % views.length;
+  renderTrend(latestSnapshot);
+});
+
+$("trendNext").addEventListener("click", () => {
+  if (!latestSnapshot) return;
+  const views = trendViews(latestSnapshot);
+  trendViewIndex = (trendViewIndex + 1) % views.length;
+  renderTrend(latestSnapshot);
+});
+
 /* Heatmap month navigation */
 $("hmPrev").addEventListener("click", () => {
   if (hmMonth === 0) { hmMonth = 11; hmYear--; }
@@ -1159,8 +1248,9 @@ window.addEventListener("resize", () => {
     fetch("/api/snapshot", { cache: "no-store" })
       .then((r) => r.json())
       .then((snap) => {
+        latestSnapshot = snap;
         drawHeatmap(snap);
-        drawTrend(snap);
+        renderTrend(snap);
         drawModelChart(snap);
       })
       .catch(() => {
@@ -1186,56 +1276,103 @@ $("sourcesBtn").addEventListener("click", async () => {
   }
 });
 
-async function loadSources() {
+async function loadSources(message = "") {
   try {
     const res = await fetch("/api/sources");
+    if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     const items = [];
+    function sourceBadge(status) {
+      if (status === "ok") return "ok";
+      if (status === "empty") return "idle";
+      if (status === "missing" || status === "unreadable") return "hit";
+      return "near";
+    }
+    function sourceRow(d, action = "") {
+      const status = d.status || "unknown";
+      const detail = [
+        `[${d.type}]`,
+        d.display_name || d.detected_name || d.label || "",
+        `${d.files_found || 0} files`,
+        d.message || "",
+        d.addedAt || "",
+      ].filter(Boolean).join(" · ");
+      return `<div class="row">
+        <div><div class="row-title">${esc(d.normalized_path || d.path)}</div><div class="row-detail">${esc(detail)}</div></div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="badge badge-${sourceBadge(status)}" style="font-size:10px">${esc(status)}</span>
+          ${action}
+        </div>
+      </div>`;
+    }
     // Registered directories (user-added)
     for (const d of data.registered || []) {
-      items.push(`<div class="row">
-        <div><div class="row-title">${esc(d.path)}</div><div class="row-detail">[${d.type}] ${d.label || ""} · ${d.addedAt || ""}</div></div>
-        <button class="btn" onclick="removeSource('${esc(d.path)}','${esc(d.type)}')" style="font-size:11px">✕</button>
-      </div>`);
+      items.push(sourceRow(
+        d,
+        `<button class="btn" data-remove-source data-path="${esc(d.path)}" data-type="${esc(d.type)}" style="font-size:11px">x</button>`,
+      ));
     }
     // Auto-discovered directories (filesystem)
     const discovered = data.discovered || [];
     for (const d of discovered) {
-      items.push(`<div class="row">
-        <div><div class="row-title">${esc(d.path)}</div><div class="row-detail">[${d.type}] ${d.label || "auto-detected"}</div></div>
-        <span class="badge badge-ok" style="font-size:10px">auto</span>
-      </div>`);
+      const action = d.status === "ok"
+        ? `<button class="btn" data-import-source data-path="${esc(d.normalized_path || d.path)}" data-type="${esc(d.type)}" data-label="${esc(d.display_name || d.detected_name || "")}" style="font-size:11px">Import</button>`
+        : `<span class="badge badge-idle" style="font-size:10px">auto</span>`;
+      items.push(sourceRow(d, action));
     }
     $("sourcesList").innerHTML = items.join("") || `<div class="empty"><p>No data sources found</p></div>`;
+    for (const button of document.querySelectorAll("[data-remove-source]")) {
+      button.addEventListener("click", () => {
+        removeSource(button.dataset.path, button.dataset.type);
+      });
+    }
+    for (const button of document.querySelectorAll("[data-import-source]")) {
+      button.addEventListener("click", () => {
+        importSource(button.dataset.path, button.dataset.type, button.dataset.label);
+      });
+    }
     const total = (data.registered?.length || 0) + (data.discovered?.length || 0);
-    $("sourcesSummary").textContent = `${total} source${total !== 1 ? "s" : ""}`;
+    $("sourcesSummary").textContent = message || `${total} source${total !== 1 ? "s" : ""}`;
+    return data;
   } catch (e) {
     $("sourcesList").innerHTML = `<div class="empty"><p>${esc(e.message)}</p></div>`;
+    return null;
   }
 }
 
 $("srcAdd").addEventListener("click", async () => {
   const path = $("srcPath").value.trim();
   const type = $("srcType").value;
+  const label = $("srcLabel").value.trim();
   if (!path) return;
+  await importSource(path, type, label);
+});
+
+async function importSource(path, type, label = "") {
   try {
-    await fetch("/api/sources", {
+    const res = await fetch("/api/sources", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path, type }),
+      body: JSON.stringify({ path, type, label }),
     });
+    if (!res.ok) throw new Error(await res.text());
+    const result = await res.json();
+    const info = result.inspection;
+    if (info) $("sourcesSummary").textContent = `${info.status}: ${info.message}`;
     $("srcPath").value = "";
+    $("srcLabel").value = "";
     await loadSources();
     // Refresh dashboard data
     refresh().catch(() => {});
   } catch (e) {
     $("sourcesSummary").textContent = e.message;
   }
-});
+}
 
 async function removeSource(path, type) {
   try {
-    await fetch(`/api/sources?path=${encodeURIComponent(path)}&type=${encodeURIComponent(type)}`, { method: "DELETE" });
+    const res = await fetch(`/api/sources?path=${encodeURIComponent(path)}&type=${encodeURIComponent(type)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(await res.text());
     await loadSources();
     refresh().catch(() => {});
   } catch (e) {
