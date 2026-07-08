@@ -175,6 +175,30 @@ export async function loadAllReports(options = {}) {
     (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
   );
 
+  // Lightweight mode: skip heavy aggregation, return only events (for fast limit refresh)
+  if (options.lightweight) {
+    return {
+      daily: { daily: [], totals: blankAggregate() },
+      sessions: { sessions: [], totals: blankAggregate() },
+      projects: { projects: [], totals: blankAggregate() },
+      events: allEvents,
+      skills: [],
+      tool: {
+        source: "codex+claude",
+        version: "native",
+        filesRead: (codex.tool?.filesRead || 0) + (claude.tool?.filesRead || 0),
+        sessionIndexEntries: 0,
+        threadStateEntries: 0,
+        dataRoots: [],
+        codexHomes: [],
+        sources: {
+          codex: { filesRead: codex.tool?.filesRead || 0, events: codex.events?.length || 0 },
+          claude: { filesRead: claude.tool?.filesRead || 0, events: claude.events?.length || 0 },
+        },
+      },
+    };
+  }
+
   const daily = mergeDaily([codex, claude]);
   const totals = buildTotals(allEvents);
 

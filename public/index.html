@@ -127,7 +127,10 @@
         <section class="panel">
           <div class="panel-head">
             <h2>Active Session</h2>
-            <span class="panel-sub">Session &amp; rate limits</span>
+            <div style="display:flex;align-items:center;gap:6px">
+              <button id="refreshLimits" class="btn" style="font-size:11px;padding:2px 8px" title="Refresh rate limits only">↻ Limits</button>
+              <span class="panel-sub">Session &amp; rate limits</span>
+            </div>
           </div>
           <div id="active"></div>
         </section>

@@ -138,7 +138,7 @@ function addDerived(row) {
   };
 }
 
-function latestEventWithRateLimits(events) {
+export function latestEventWithRateLimits(events) {
   return [...(events || [])]
     .filter((event) => event.rateLimits)
     .sort((a, b) => (isoMs(b.timestamp) ?? 0) - (isoMs(a.timestamp) ?? 0))[0] || null;

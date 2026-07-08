@@ -323,6 +323,82 @@ function startWeb(options) {
         return;
       }
 
+      // ── GET /api/limits ── fast rate-limit refresh (scan only most recent session)
+      if (req.method === "GET" && url.pathname === "/api/limits") {
+        const { readdir, readFile } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const { homedir } = await import("node:os");
+
+        // Scan only the most recent session file for rate limit headers
+        async function findLatestLimits(dataDir) {
+          try {
+            // Recursively collect all .jsonl files
+            async function walk(dir, depth = 0) {
+              const files = [];
+              if (depth > 4) return files; // safety limit
+              try {
+                const ents = await readdir(dir, { withFileTypes: true });
+                for (const e of ents) {
+                  const full = join(dir, e.name);
+                  if (e.isFile() && e.name.endsWith(".jsonl")) files.push(full);
+                  else if (e.isDirectory()) {
+                    const subs = await walk(full, depth + 1);
+                    files.push(...subs);
+                  }
+                }
+              } catch {}
+              return files;
+            }
+            const allFiles = await walk(dataDir);
+            if (!allFiles.length) return null;
+
+            // Sort by path (date-based), take most recent 3
+            const candidates = allFiles.sort().slice(-3);
+            for (const f of candidates.reverse()) {
+              try {
+                const raw = await readFile(f, "utf8");
+                const lines = raw.trim().split(/\r?\n/);
+                for (let i = lines.length - 1; i >= Math.max(0, lines.length - 100); i--) {
+                  try {
+                    const obj = JSON.parse(lines[i]);
+                    const rl = obj.rate_limits || obj.rateLimits || obj.payload?.rate_limits || obj.payload?.rateLimits;
+                    if (rl) return { rateLimits: rl, timestamp: obj.timestamp || null };
+                  } catch { continue; }
+                }
+              } catch { continue; }
+            }
+          } catch { return null; }
+          return null;
+        }
+
+        const home = homedir();
+        const [codexResult, claudeResult] = await Promise.all([
+          findLatestLimits(join(home, ".codex", "sessions")),
+          findLatestLimits(join(home, ".claude", "projects")),
+        ]);
+
+        // Pick the most recent, normalise epoch → ISO
+        const best = [codexResult, claudeResult]
+          .filter(Boolean)
+          .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))[0] || null;
+
+        const limits = best?.rateLimits ? { ...best.rateLimits } : null;
+        if (limits) {
+          for (const key of ["primary", "secondary"]) {
+            if (limits[key]?.resets_at && typeof limits[key].resets_at === "number") {
+              limits[key] = { ...limits[key], resets_at: new Date(limits[key].resets_at * 1000).toISOString() };
+            }
+          }
+        }
+
+        sendJson(res, 200, {
+          limits,
+          limit_updated_at: best?.timestamp || null,
+          generated_at: new Date().toISOString(),
+        });
+        return;
+      }
+
       // ── GET /api/sync-state ── return last push/pull times
       if (req.method === "GET" && url.pathname === "/api/sync-state") {
         const { readSyncState } = await import("./sync.js");

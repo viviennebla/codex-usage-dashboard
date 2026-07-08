@@ -521,6 +521,35 @@ function renderActive(snapshot) {
   $("active").innerHTML = rows.join("");
 }
 
+/* ── Fast limits refresh ─────────────────── */
+
+async function refreshLimitsOnly() {
+  const btn = $("refreshLimits");
+  btn.disabled = true;
+  btn.textContent = "↻ …";
+  try {
+    const res = await fetch("/api/limits", { cache: "no-store" });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    // Merge refreshed limits into the cached snapshot
+    if (latestSnapshot) {
+      latestSnapshot.limits = data.limits;
+      latestSnapshot.limit_updated_at = data.limit_updated_at;
+    }
+    renderActive(latestSnapshot || { limits: data.limits, limit_updated_at: data.limit_updated_at });
+    toast("Limits refreshed", "success");
+  } catch (err) {
+    toast("Limits refresh failed: " + err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "↻ Limits";
+  }
+}
+
+$("refreshLimits").addEventListener("click", () => {
+  refreshLimitsOnly().catch(() => {});
+});
+
 /* ── Render: Projects ────────────────────── */
 
 function renderProjects(snapshot) {
