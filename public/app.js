@@ -645,10 +645,17 @@ function drawModelChart(snapshot) {
   const OUTPUT_COLOR = "#3b82f6";  // blue — output
   const OUTPUT_COLOR_HL = "#60a5fa";
 
-  // Find max total (cache + input + output) for Y-axis scale
+  // Sort by token descending
+  entries.sort((a, b) =>
+    ((b[1].cacheReadTokens || 0) + (b[1].inputTokens || 0) + (b[1].outputTokens || 0)) -
+    ((a[1].cacheReadTokens || 0) + (a[1].inputTokens || 0) + (a[1].outputTokens || 0))
+  );
+
+  // Find max total for Y-axis scale
   const tokenMax = Math.max(...entries.map(([, u]) =>
     (u.cacheReadTokens || 0) + (u.inputTokens || 0) + (u.outputTokens || 0)
   ), 1);
+  const requestMax = Math.max(...entries.map(([, u]) => u.eventCount || 0), 1);
 
   // Single bar per model, stacked
   const barW = Math.max(14, Math.min(50, (chartW / count) * 0.55));
@@ -691,13 +698,60 @@ function drawModelChart(snapshot) {
       ctx.lineTo(W - pad.right, Math.round(y) + 0.5);
       ctx.stroke();
 
+      // Left Y-axis: tokens
       const tokenVal = tokenMax - (tokenMax * i) / gridLines;
-      ctx.fillStyle = "#64748b";
+      ctx.fillStyle = TOKEN_COLOR;
       ctx.font = "10px 'Fira Code', ui-monospace, monospace";
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
       ctx.fillText(fmtShort(tokenVal), pad.left - 8, Math.round(y));
+
+      // Right Y-axis: requests
+      const reqVal = requestMax - (requestMax * i) / gridLines;
+      ctx.fillStyle = REQUEST_COLOR;
+      ctx.textAlign = "left";
+      ctx.fillText(fmtShort(reqVal), W - pad.right + 8, Math.round(y));
     }
+
+    // Request count line (overlay on stacked bars)
+    const reqPoints = bars.map((bar) => ({
+      x: bar.groupX + bar.groupW / 2,
+      y: pad.top + chartH - Math.max(2, (chartH * (bar.requests || 0)) / requestMax),
+    }));
+    if (reqPoints.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(reqPoints[0].x, pad.top + chartH);
+      for (const pt of reqPoints) ctx.lineTo(pt.x, pt.y);
+      ctx.lineTo(reqPoints[reqPoints.length - 1].x, pad.top + chartH);
+      ctx.closePath();
+      ctx.fillStyle = REQUEST_COLOR_GLOW;
+      ctx.fill();
+    }
+    ctx.strokeStyle = REQUEST_COLOR;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (let i = 0; i < reqPoints.length; i++) {
+      const pt = reqPoints[i];
+      if (i === 0) ctx.moveTo(pt.x, pt.y);
+      else {
+        const prev = reqPoints[i - 1];
+        ctx.quadraticCurveTo(prev.x, prev.y, (prev.x + pt.x) / 2, (prev.y + pt.y) / 2);
+        ctx.lineTo(pt.x, pt.y);
+      }
+    }
+    ctx.stroke();
+    // Data-point dots
+    reqPoints.forEach((pt, i) => {
+      const isHL = highlightIdx === i;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, isHL ? 4 : 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = isHL ? REQUEST_COLOR_HL : "#0b1120";
+      ctx.fill();
+      ctx.strokeStyle = isHL ? REQUEST_COLOR_HL : REQUEST_COLOR;
+      ctx.lineWidth = isHL ? 2 : 1.5;
+      ctx.stroke();
+    });
 
     // Stacked bars
     bars.forEach((bar, i) => {
@@ -741,11 +795,11 @@ function drawModelChart(snapshot) {
       ctx.font = `${isHL ? "bold " : ""}10px 'Fira Code', ui-monospace, monospace`;
       ctx.fillText(label, bar.groupX + bar.groupW / 2, pad.top + chartH + 8);
 
-      // Request count + cache% below name
+      // Cache % below name
       const cachePct = bar.totalTokens > 0 ? Math.round(bar.cacheTokens / bar.totalTokens * 100) : 0;
       ctx.fillStyle = isHL ? "#94a3b8" : "#475569";
       ctx.font = "8px 'Fira Code', ui-monospace, monospace";
-      ctx.fillText(`${fmtShort(bar.requests)} req · ${cachePct}% cache`, bar.groupX + bar.groupW / 2, pad.top + chartH + 22);
+      ctx.fillText(`${cachePct}% cache`, bar.groupX + bar.groupW / 2, pad.top + chartH + 22);
     });
 
     // Legend
@@ -765,6 +819,15 @@ function drawModelChart(snapshot) {
     lx += 60;
     ctx.fillStyle = OUTPUT_COLOR; ctx.fillRect(lx, legendY, 10, 10);
     ctx.fillStyle = "#94a3b8"; ctx.fillText("Output", lx + 14, legendY + 5);
+
+    lx += 70;
+    ctx.strokeStyle = REQUEST_COLOR; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(lx, legendY + 5); ctx.lineTo(lx + 12, legendY + 5); ctx.stroke();
+    ctx.beginPath(); ctx.arc(lx + 6, legendY + 5, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#0b1120"; ctx.fill();
+    ctx.strokeStyle = REQUEST_COLOR; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = "#94a3b8"; ctx.textAlign = "start";
+    ctx.fillText("Requests", lx + 16, legendY + 5);
   }
 
   draw(-1);
