@@ -323,19 +323,86 @@ function startWeb(options) {
         return;
       }
 
-      // ── GET /api/limits ── fast rate-limit refresh (scan only most recent session)
+      // ── GET /api/limits ── fast rate-limit refresh
       if (req.method === "GET" && url.pathname === "/api/limits") {
         const { readdir, readFile } = await import("node:fs/promises");
         const { join } = await import("node:path");
         const { homedir } = await import("node:os");
 
-        // Scan only the most recent session file for rate limit headers
+        let probed = false;
+
+        // ── Step 1: Probe Codex API for live rate limits ──
+        try {
+          const authRaw = await readFile(join(homedir(), ".codex", "auth.json"), "utf8");
+          const auth = JSON.parse(authRaw);
+          const tokens = auth.tokens || {};
+          // Get the first available token
+          // OAuth JWT: tokens.access_token is the Bearer; fallback to OPENAI_API_KEY
+          const apiKey = auth.OPENAI_API_KEY
+            || (typeof tokens.access_token === "string" ? tokens.access_token : null)
+            || Object.values(tokens).find((v) => typeof v === "string" && v.length > 20)
+            || null;
+
+          if (apiKey) {
+            // Read config.toml for base_url
+            let baseUrl = "https://api.openai.com/v1";
+            let model = "gpt-4o-mini";
+            try {
+              const tomlRaw = await readFile(join(homedir(), ".codex", "config.toml"), "utf8");
+              const urlMatch = tomlRaw.match(/base_url\s*=\s*"([^"]+)"/);
+              if (urlMatch) baseUrl = urlMatch[1];
+              const modelMatch = tomlRaw.match(/model\s*=\s*"([^"]+)"/);
+              if (modelMatch) model = modelMatch[1];
+            } catch {}
+
+            // Minimal probe: "hi" → 1 token output
+            const probeResp = await fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "authorization": `Bearer ${apiKey}`,
+              },
+              body: JSON.stringify({
+                model,
+                messages: [{ role: "user", content: "hi" }],
+                max_tokens: 1,
+                temperature: 0,
+              }),
+            });
+
+            if (probeResp.ok) {
+              // Check response body for rate_limits field
+              const probeData = await probeResp.json();
+              const rl = probeData.rate_limits || probeData.rateLimits;
+              if (rl) {
+                const limits = { ...rl };
+                // Convert epoch → ISO
+                for (const key of ["primary", "secondary"]) {
+                  if (limits[key]?.resets_at && typeof limits[key].resets_at === "number") {
+                    limits[key] = { ...limits[key], resets_at: new Date(limits[key].resets_at * 1000).toISOString() };
+                  }
+                }
+                sendJson(res, 200, {
+                  limits,
+                  limit_updated_at: new Date().toISOString(),
+                  generated_at: new Date().toISOString(),
+                  probe: true,
+                  probe_tokens: probeData.usage?.total_tokens || 0,
+                });
+                probed = true;
+              }
+            }
+          }
+        } catch { /* probe failed — fall back to file scan */ }
+
+        if (probed) return;
+
+        // ── Step 2: Fallback — scan most recent session files ──
         async function findLatestLimits(dataDir) {
           try {
-            // Recursively collect all .jsonl files
             async function walk(dir, depth = 0) {
               const files = [];
-              if (depth > 4) return files; // safety limit
+              if (depth > 4) return files;
               try {
                 const ents = await readdir(dir, { withFileTypes: true });
                 for (const e of ents) {
@@ -351,8 +418,6 @@ function startWeb(options) {
             }
             const allFiles = await walk(dataDir);
             if (!allFiles.length) return null;
-
-            // Sort by path (date-based), take most recent 3
             const candidates = allFiles.sort().slice(-3);
             for (const f of candidates.reverse()) {
               try {
@@ -377,7 +442,6 @@ function startWeb(options) {
           findLatestLimits(join(home, ".claude", "projects")),
         ]);
 
-        // Pick the most recent, normalise epoch → ISO
         const best = [codexResult, claudeResult]
           .filter(Boolean)
           .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))[0] || null;
@@ -391,9 +455,14 @@ function startWeb(options) {
           }
         }
 
+        const limitAge = best?.timestamp
+          ? Math.round((Date.now() - new Date(best.timestamp).getTime()) / 3600000 * 10) / 10
+          : null;
         sendJson(res, 200, {
           limits,
           limit_updated_at: best?.timestamp || null,
+          limit_age_hours: limitAge,
+          stale: limitAge !== null && limitAge > 1,
           generated_at: new Date().toISOString(),
         });
         return;

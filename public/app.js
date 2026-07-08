@@ -537,7 +537,11 @@ async function refreshLimitsOnly() {
       latestSnapshot.limit_updated_at = data.limit_updated_at;
     }
     renderActive(latestSnapshot || { limits: data.limits, limit_updated_at: data.limit_updated_at });
-    toast("Limits refreshed", "success");
+    if (data.stale) {
+      toast(`Limits data is ${data.limit_age_hours}h old — use Codex once to refresh`, "error");
+    } else {
+      toast("Limits refreshed", "success");
+    }
   } catch (err) {
     toast("Limits refresh failed: " + err.message, "error");
   } finally {
