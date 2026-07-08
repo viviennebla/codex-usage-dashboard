@@ -2,6 +2,8 @@
 
 本地 Codex + Claude Code 使用量监控仪表盘，支持多设备数据同步。
 
+![Dashboard Screenshot](public/screenshot.png)
+
 ## 功能
 
 - **Token 趋势图** — DeepSeek 风格柱状图（token）+ 折线图（API 请求数），hover 显示详细数值
