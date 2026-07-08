@@ -119,7 +119,7 @@ function decodeProjectName(dirName) {
     if (idx >= 0) {
       // Everything before the root marker (plus the leading '-') is meaningless,
       // then root + rest with '-' → '/'
-      const pathPart = dirName.slice(idx + 1); // e.g., "Users-zhoufeiyan-code-project"
+      const pathPart = dirName.slice(idx + 1); // e.g., "Users-name-code-project" → /Users/name/code/project
       return "/" + pathPart.replace(/-/g, "/");
     }
   }

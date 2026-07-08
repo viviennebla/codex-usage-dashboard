@@ -521,7 +521,7 @@ async function main() {
   if (options.command === "pull") {
     if (!options.server) {
       console.error("Error: --server <url> is required for the pull command.");
-      console.error("Example: node src/cli.js pull --server http://8.160.186.237:34777");
+      console.error("Example: node src/cli.js pull --server http://your-server:34777");
       process.exitCode = 2;
       return;
     }
