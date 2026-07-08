@@ -382,6 +382,7 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
   let currentModel = null;
   let previousTotalUsage = null;
   let lineNumber = 0;
+  const tools = [];
 
   const stream = createReadStream(fileInfo.file, { encoding: "utf8" });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
@@ -410,6 +411,19 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
 
     if (payload.type === "user_message" && !meta.inferredTitle) {
       meta.inferredTitle = titleFromUserMessage(payload.message);
+    }
+
+    // Collect MCP tool calls
+    if (payload.type === "mcp_tool_call_end" && payload.invocation?.tool) {
+      const toolName = payload.invocation.tool;
+      const serverName = payload.invocation.server || "unknown";
+      const displayName = serverName !== "unknown" ? `${serverName}/${toolName}` : toolName;
+      const existing = tools.find((t) => t.name === displayName);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        tools.push({ name: displayName, count: 1 });
+      }
     }
 
     if (payload.type !== "token_count") continue;
@@ -462,7 +476,7 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
     });
   }
 
-  return events;
+  return { events, tools };
 }
 
 function blankAggregate(extra = {}) {
@@ -547,10 +561,20 @@ export async function loadCodexReports(options = {}) {
   const files = await collectSessionFiles(homes, options.sourceLabels || new Map());
   const sessionIndex = await loadSessionIndex(homes);
   const threadStateIndex = await loadThreadStateIndex(homes);
-  const nestedEvents = await Promise.all(
+  const nestedResults = await Promise.all(
     files.map((file) => parseSessionFile(file, sessionIndex, threadStateIndex, options)),
   );
-  const events = nestedEvents.flat().sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+  const events = nestedResults.flatMap((r) => r.events).sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+  const rawTools = nestedResults.flatMap((r) => r.tools);
+  const toolMap = new Map();
+  for (const t of rawTools) {
+    if (toolMap.has(t.name)) {
+      toolMap.get(t.name).count += t.count;
+    } else {
+      toolMap.set(t.name, { ...t });
+    }
+  }
+  const tools = [...toolMap.values()].sort((a, b) => b.count - a.count);
   const totals = buildTotals(events);
 
   const daily = sortByDate(buildRows(
@@ -604,6 +628,7 @@ export async function loadCodexReports(options = {}) {
     sessions: { sessions, totals },
     projects: { projects, totals },
     events,
+    skills: tools,
     tool: {
       source: "codex-jsonl",
       version: "native",

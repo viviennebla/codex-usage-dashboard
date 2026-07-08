@@ -252,6 +252,7 @@ export async function loadAllReports(options = {}) {
 
   // Merge skill stats from claude (codex currently has none)
   const skills = mergeSkillStats([
+    codex.skills,
     claude.skills,
   ]);
 
