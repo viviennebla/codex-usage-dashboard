@@ -26,6 +26,7 @@ function sumModels(target, source) {
       outputTokens: 0,
       reasoningOutputTokens: 0,
       totalTokens: 0,
+      eventCount: 0,
       costUSD: null,
       isFallback: false,
     };
@@ -34,6 +35,7 @@ function sumModels(target, source) {
     target[model].outputTokens += number(usage.outputTokens);
     target[model].reasoningOutputTokens += number(usage.reasoningOutputTokens);
     target[model].totalTokens += number(usage.totalTokens);
+    target[model].eventCount += number(usage.eventCount);
     target[model].isFallback = target[model].isFallback || Boolean(usage.isFallback);
   }
 }
