@@ -713,47 +713,7 @@ function drawModelChart(snapshot) {
       ctx.fillText(fmtShort(reqVal), W - pad.right + 8, Math.round(y));
     }
 
-    // Request count line (overlay on stacked bars)
-    const reqPoints = bars.map((bar) => ({
-      x: bar.groupX + bar.groupW / 2,
-      y: pad.top + chartH - Math.max(2, (chartH * (bar.requests || 0)) / requestMax),
-    }));
-    if (reqPoints.length > 1) {
-      ctx.beginPath();
-      ctx.moveTo(reqPoints[0].x, pad.top + chartH);
-      for (const pt of reqPoints) ctx.lineTo(pt.x, pt.y);
-      ctx.lineTo(reqPoints[reqPoints.length - 1].x, pad.top + chartH);
-      ctx.closePath();
-      ctx.fillStyle = REQUEST_COLOR_GLOW;
-      ctx.fill();
-    }
-    ctx.strokeStyle = REQUEST_COLOR;
-    ctx.lineWidth = 2;
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    for (let i = 0; i < reqPoints.length; i++) {
-      const pt = reqPoints[i];
-      if (i === 0) ctx.moveTo(pt.x, pt.y);
-      else {
-        const prev = reqPoints[i - 1];
-        ctx.quadraticCurveTo(prev.x, prev.y, (prev.x + pt.x) / 2, (prev.y + pt.y) / 2);
-        ctx.lineTo(pt.x, pt.y);
-      }
-    }
-    ctx.stroke();
-    // Data-point dots
-    reqPoints.forEach((pt, i) => {
-      const isHL = highlightIdx === i;
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, isHL ? 4 : 2.5, 0, Math.PI * 2);
-      ctx.fillStyle = isHL ? REQUEST_COLOR_HL : "#0b1120";
-      ctx.fill();
-      ctx.strokeStyle = isHL ? REQUEST_COLOR_HL : REQUEST_COLOR;
-      ctx.lineWidth = isHL ? 2 : 1.5;
-      ctx.stroke();
-    });
-
-    // Stacked bars
+    // Stacked bars (drawn first, below the request line)
     bars.forEach((bar, i) => {
       const isHL = highlightIdx === i;
       const x = bar.x, w = bar.barW;
@@ -782,6 +742,45 @@ function drawModelChart(snapshot) {
         ctx.textAlign = "center";
         ctx.fillText(fmtShort(bar.totalTokens), x + w / 2, bar.cache.y - 2);
       }
+    });
+
+    // Request count line (overlay, drawn AFTER bars)
+    const reqPoints = bars.map((bar) => ({
+      x: bar.groupX + bar.groupW / 2,
+      y: pad.top + chartH - Math.max(2, (chartH * (bar.requests || 0)) / requestMax),
+    }));
+    if (reqPoints.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(reqPoints[0].x, pad.top + chartH);
+      for (const pt of reqPoints) ctx.lineTo(pt.x, pt.y);
+      ctx.lineTo(reqPoints[reqPoints.length - 1].x, pad.top + chartH);
+      ctx.closePath();
+      ctx.fillStyle = REQUEST_COLOR_GLOW;
+      ctx.fill();
+    }
+    ctx.strokeStyle = REQUEST_COLOR;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (let i = 0; i < reqPoints.length; i++) {
+      const pt = reqPoints[i];
+      if (i === 0) ctx.moveTo(pt.x, pt.y);
+      else {
+        const prev = reqPoints[i - 1];
+        ctx.quadraticCurveTo(prev.x, prev.y, (prev.x + pt.x) / 2, (prev.y + pt.y) / 2);
+        ctx.lineTo(pt.x, pt.y);
+      }
+    }
+    ctx.stroke();
+    reqPoints.forEach((pt, i) => {
+      const isHL = highlightIdx === i;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, isHL ? 4 : 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = isHL ? REQUEST_COLOR_HL : "#0b1120";
+      ctx.fill();
+      ctx.strokeStyle = isHL ? REQUEST_COLOR_HL : REQUEST_COLOR;
+      ctx.lineWidth = isHL ? 2 : 1.5;
+      ctx.stroke();
     });
 
     // X-axis labels
