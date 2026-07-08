@@ -53,11 +53,24 @@ export async function pullFromServer(serverUrl) {
     return { synced, failed, message: `Failed to connect to ${baseUrl}: ${err.message}` };
   }
 
+  // 2. Clean up local orphan snapshots (not on server anymore)
+  const remoteIds = new Set(devices.map((d) => d.device_id));
+  const { readDeviceStates } = await import("./state.js");
+  const localDevices = await readDeviceStates();
+  for (const [localId] of localDevices) {
+    if (localId === hostname()) continue; // keep self
+    if (!remoteIds.has(localId)) {
+      const { removeDeviceState } = await import("./state.js");
+      await removeDeviceState(localId);
+      console.log(`[sync] removed orphaned local cache: ${localId}`);
+    }
+  }
+
   if (!Array.isArray(devices) || devices.length === 0) {
     return { synced, failed, message: "No remote devices found" };
   }
 
-  // 2. Fetch each device's snapshot (skip self)
+  // 3. Fetch each device's snapshot (skip self)
   const localId = hostname();
   for (const device of devices) {
     const deviceId = device.device_id;
