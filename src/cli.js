@@ -193,14 +193,15 @@ function startWeb(options) {
       if (req.method === "GET" && url.pathname === "/api/snapshot") {
         const snapshot = await createSnapshot(options);
 
-        // Merge pulled device snapshots into the view
+        // Merge pulled device snapshots into the view (skip self)
         const { readDeviceStates: readDevs } = await import("./state.js");
-        const devices = await readDevs(stateDir);
-        if (devices.size > 0) {
+        const remoteDevices = await readDevs(stateDir);
+        const localName = hostname();
+        remoteDevices.delete(localName); // never merge own stale snapshot
+        if (remoteDevices.size > 0) {
           const { mergeSnapshots } = await import("./merge.js");
-          // Add local as a device entry
-          const allDevices = new Map(devices);
-          const localName = hostname();
+          // Local snapshot is the base; only merge other devices' data
+          const allDevices = new Map(remoteDevices);
           allDevices.set(localName, { deviceName: localName, snapshot });
           const merged = mergeSnapshots(allDevices);
 

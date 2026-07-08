@@ -1372,7 +1372,7 @@ async function loadSources(message = "") {
     for (const d of discovered) {
       const action = d.status === "ok"
         ? `<button class="btn" data-import-source data-path="${esc(d.normalized_path || d.path)}" data-type="${esc(d.type)}" data-label="${esc(d.display_name || d.detected_name || "")}" style="font-size:11px">Import</button>`
-        : `<span class="badge badge-idle" style="font-size:10px">auto</span>`;
+        : `<button class="btn" data-remove-source data-path="${esc(d.normalized_path || d.path)}" data-type="${esc(d.type)}" style="font-size:11px">x</button>`;
       items.push(sourceRow(d, action));
     }
     // Remote synced devices

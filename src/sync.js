@@ -1,5 +1,6 @@
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
+import { hostname } from "node:os";
 
 const SYNC_FILE = "state/sync.json";
 
@@ -56,9 +57,14 @@ export async function pullFromServer(serverUrl) {
     return { synced, failed, message: "No remote devices found" };
   }
 
-  // 2. Fetch each device's snapshot
+  // 2. Fetch each device's snapshot (skip self)
+  const localId = hostname();
   for (const device of devices) {
     const deviceId = device.device_id;
+    if (deviceId === localId) {
+      console.log(`[sync] skipping local device: ${deviceId}`);
+      continue;
+    }
     try {
       const res = await fetch(`${baseUrl}/api/snapshot/${deviceId}`);
       if (!res.ok) {
