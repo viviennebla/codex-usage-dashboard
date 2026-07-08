@@ -205,8 +205,18 @@ function startWeb(options) {
 
           // Carry over device-specific fields from local snapshot
           merged.skills = snapshot.skills || [];
-          merged.limits = snapshot.limits || null;
-          merged.limit_updated_at = snapshot.limit_updated_at || null;
+          // Pick the most recent limits + limit_updated_at across all devices
+          let bestLimits = snapshot.limits || null;
+          let bestLimitAt = snapshot.limit_updated_at || null;
+          for (const [, { snapshot: devSnap }] of allDevices) {
+            const devAt = devSnap?.limit_updated_at;
+            if (devAt && (!bestLimitAt || devAt > bestLimitAt)) {
+              bestLimitAt = devAt;
+              if (devSnap?.limits) bestLimits = devSnap.limits;
+            }
+          }
+          merged.limits = bestLimits;
+          merged.limit_updated_at = bestLimitAt;
           merged.burn_rate = snapshot.burn_rate || null;
           merged.active_session = snapshot.active_session || null;
           // Expose device list for frontend
