@@ -1378,7 +1378,9 @@ $("refresh").addEventListener("click", () => {
 $("syncBtn").addEventListener("click", () => {
   const panel = $("syncPanel");
   if (panel.style.display === "none") {
+    $("sourcesPanel").style.display = "none";
     panel.style.display = "";
+    switchSyncTab("token");
     loadSyncState();
   } else {
     panel.style.display = "none";
@@ -1447,6 +1449,7 @@ refresh().catch((err) => {
 $("sourcesBtn").addEventListener("click", async () => {
   const panel = $("sourcesPanel");
   if (panel.style.display === "none") {
+    $("syncPanel").style.display = "none";
     panel.style.display = "";
     await loadSources();
   } else {
@@ -1459,7 +1462,7 @@ async function loadSources(message = "") {
     const res = await fetch("/api/sources");
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    const items = [];
+
     function sourceBadge(status) {
       if (status === "ok") return "ok";
       if (status === "empty") return "idle";
@@ -1471,7 +1474,7 @@ async function loadSources(message = "") {
       const detail = [
         `[${d.type}]`,
         d.display_name || d.detected_name || d.label || "",
-        `${d.files_found || 0} files`,
+        d.files_found ? `${d.files_found} files` : "",
         d.message || "",
         d.addedAt || "",
       ].filter(Boolean).join(" · ");
@@ -1483,34 +1486,46 @@ async function loadSources(message = "") {
         </div>
       </div>`;
     }
-    // Registered directories (user-added)
+
+    // ── Agent Data: registered + discovered codex/claude ──
+    const agentItems = [];
     for (const d of data.registered || []) {
-      items.push(sourceRow(
-        d,
-        `<button class="btn" data-remove-source data-path="${esc(d.path)}" data-type="${esc(d.type)}" style="font-size:11px">x</button>`,
-      ));
+      if (d.type === "skills") continue;
+      agentItems.push(sourceRow(d, `<button class="btn" data-remove-source data-path="${esc(d.path)}" data-type="${esc(d.type)}" style="font-size:11px">x</button>`));
     }
-    // Auto-discovered directories (filesystem)
-    const discovered = data.discovered || [];
-    for (const d of discovered) {
+    for (const d of data.discovered || []) {
+      if (d.type === "skills") continue;
       const action = d.status === "ok"
         ? `<button class="btn" data-import-source data-path="${esc(d.normalized_path || d.path)}" data-type="${esc(d.type)}" data-label="${esc(d.display_name || d.detected_name || "")}" style="font-size:11px">Import</button>`
         : `<button class="btn" data-remove-source data-path="${esc(d.normalized_path || d.path)}" data-type="${esc(d.type)}" style="font-size:11px">x</button>`;
-      items.push(sourceRow(d, action));
+      agentItems.push(sourceRow(d, action));
     }
-    // Remote synced devices
-    const remote = data.remote || [];
-    if (remote.length > 0) {
-      items.push(`<div style="font-size:11px;color:#64748b;padding:12px 0 4px;text-transform:uppercase;letter-spacing:0.05em">Remote Devices</div>`);
-      for (const d of remote) {
-        items.push(sourceRow(
-          { ...d, type: "remote" },
-          `<span class="badge badge-active" style="font-size:10px">synced</span>`,
-        ));
-      }
-    }
+    $("sourcesListAgent").innerHTML = agentItems.join("") || `<div class="empty"><p>None</p></div>`;
+    $("srcCountAgent").textContent = `(${agentItems.length})`;
 
-    $("sourcesList").innerHTML = items.join("") || `<div class="empty"><p>No data sources found</p></div>`;
+    // ── Skill Directories: registered + discovered skills ──
+    const skillItems = [];
+    for (const d of data.registered || []) {
+      if (d.type !== "skills") continue;
+      skillItems.push(sourceRow(d, `<button class="btn" data-remove-source data-path="${esc(d.path)}" data-type="${esc(d.type)}" style="font-size:11px">x</button>`));
+    }
+    for (const d of data.discovered || []) {
+      if (d.type !== "skills") continue;
+      skillItems.push(sourceRow(d, ""));
+    }
+    $("sourcesListSkills").innerHTML = skillItems.join("") || `<div class="empty"><p>None — register a third-party directory</p></div>`;
+    $("srcCountSkills").textContent = `(${skillItems.length})`;
+
+    // ── Remote Devices ──
+    const remote = data.remote || [];
+    const remoteItems = remote.map((d) => sourceRow(
+      { ...d, type: "remote" },
+      `<span class="badge badge-active" style="font-size:10px">synced</span>`,
+    ));
+    $("sourcesListRemote").innerHTML = remoteItems.join("") || `<div class="empty"><p>None — sync with a server first</p></div>`;
+    $("srcCountRemote").textContent = `(${remoteItems.length})`;
+
+    // Bind events
     for (const button of document.querySelectorAll("[data-remove-source]")) {
       button.addEventListener("click", () => {
         removeSource(button.dataset.path, button.dataset.type);
@@ -1521,7 +1536,8 @@ async function loadSources(message = "") {
         importSource(button.dataset.path, button.dataset.type, button.dataset.label);
       });
     }
-    const total = (data.registered?.length || 0) + (data.discovered?.length || 0) + (data.remote?.length || 0);
+
+    const total = agentItems.length + skillItems.length + remoteItems.length;
     $("sourcesSummary").textContent = message || `${total} source${total !== 1 ? "s" : ""}`;
     return data;
   } catch (e) {
@@ -1574,17 +1590,23 @@ async function removeSource(path, type) {
 
 let skillSyncSelections = {}; // name -> "push" | "pull" | null
 
-$("skillSyncBtn").addEventListener("click", () => {
-  const panel = $("skillSyncPanel");
-  if (panel.style.display === "none") {
-    panel.style.display = "";
-    $("skillSyncServer").value = syncServerUrl || "";
-    $("skillSyncList").innerHTML = "";
-    $("skillSyncActions").style.display = "none";
-    $("skillSyncSummary").textContent = "";
-  } else {
-    panel.style.display = "none";
-  }
+/* ── Sync Tab Switching ──────────────────── */
+
+function switchSyncTab(tab) {
+  $("syncTabToken").style.background = tab === "token" ? "#1e293b" : "transparent";
+  $("syncTabToken").style.color = tab === "token" ? "#e2e8f0" : "#64748b";
+  $("syncTabToken").style.borderColor = tab === "token" ? "#334155" : "transparent";
+  $("syncTabSkill").style.background = tab === "skill" ? "#1e293b" : "transparent";
+  $("syncTabSkill").style.color = tab === "skill" ? "#e2e8f0" : "#64748b";
+  $("syncTabSkill").style.borderColor = tab === "skill" ? "#334155" : "transparent";
+  $("syncContentToken").style.display = tab === "token" ? "" : "none";
+  $("syncContentSkill").style.display = tab === "skill" ? "" : "none";
+}
+
+$("syncTabToken").addEventListener("click", () => switchSyncTab("token"));
+$("syncTabSkill").addEventListener("click", () => {
+  switchSyncTab("skill");
+  if (syncServerUrl) $("skillSyncServer").value = syncServerUrl;
 });
 
 $("skillSyncCompare").addEventListener("click", async () => {
@@ -1700,7 +1722,7 @@ $("skillSyncApply").addEventListener("click", async () => {
       const ok = data.results?.filter((r) => r.ok).length || 0;
       toast(`Pulled ${ok}/${pullNames.length} skills`, "success");
     }
-    $("skillSyncPanel").style.display = "none";
+    $("skillSyncList").innerHTML = ""; $("skillSyncActions").style.display = "none";
   } catch (err) {
     toast("Skill sync failed: " + err.message, "error");
   } finally {
@@ -1709,6 +1731,7 @@ $("skillSyncApply").addEventListener("click", async () => {
 });
 
 $("skillSyncCancel").addEventListener("click", () => {
-  $("skillSyncPanel").style.display = "none";
+  $("skillSyncList").innerHTML = "";
+  $("skillSyncActions").style.display = "none";
 });
 

@@ -268,6 +268,37 @@ body {
   margin-bottom: var(--space-4);
 }
 
+/* ── Source Categories ───────────────────── */
+
+.src-category {
+  margin-bottom: 4px;
+}
+.src-category summary {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 8px 0;
+  cursor: pointer;
+  user-select: none;
+}
+.src-category summary:hover {
+  color: #e2e8f0;
+}
+.src-category[open] summary {
+  border-bottom: 1px solid #1e293b;
+  margin-bottom: 4px;
+}
+
+/* ── Sync Tabs ───────────────────────────── */
+
+.sync-tab.active {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-color: #334155;
+}
+
 .sync-device-row {
   transition: background var(--duration-fast) var(--ease-out);
 }
