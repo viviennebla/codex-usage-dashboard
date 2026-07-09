@@ -635,7 +635,8 @@ function startWeb(options) {
           origin: "registered",
           addedAt: dir.addedAt || null,
         })));
-        const discovered = await discoverSourceDiagnostics(dirs);
+        const discovered = (await discoverSourceDiagnostics(dirs))
+          .filter((d) => d.status !== "missing"); // skip paths that don't exist
 
         // Include synced remote devices as sources (exclude self)
         const devices = await readDeviceStates(stateDir);
