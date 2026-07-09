@@ -426,7 +426,7 @@ function extractSkillCalls(events) {
     if (!ev.skill) continue;
     const name = ev.skill;
     if (!skillMap.has(name)) {
-      skillMap.set(name, { name, count: 0, totalTokens: 0 });
+      skillMap.set(name, { name, count: 0, totalTokens: 0, agent: "claude" });
     }
     const entry = skillMap.get(name);
     entry.count += 1;

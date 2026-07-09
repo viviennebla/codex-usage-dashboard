@@ -422,7 +422,7 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
       if (existing) {
         existing.count += 1;
       } else {
-        tools.push({ name: displayName, count: 1 });
+        tools.push({ name: displayName, count: 1, agent: "codex" });
       }
     }
 

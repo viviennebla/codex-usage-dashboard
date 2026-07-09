@@ -956,7 +956,8 @@ function renderSkills(snapshot) {
   }
   $("skills").innerHTML = skills.map((s) => {
     const hasTokens = s.totalTokens && s.totalTokens > 0;
-    const detail = `${s.count} call${s.count !== 1 ? "s" : ""}${hasTokens ? "" : " · Codex MCP tool"}`;
+    const agentLabel = s.agent === "codex" ? "Codex" : s.agent === "claude" ? "Claude" : "";
+    const detail = `${s.count} call${s.count !== 1 ? "s" : ""}${agentLabel ? ` · ${agentLabel}` : ""}`;
     return usageRow(
       s.name,
       detail,

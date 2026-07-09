@@ -143,10 +143,13 @@ function mergeSkillStats(skillLists) {
   for (const list of skillLists) {
     if (!list) continue;
     for (const s of list) {
-      if (!map.has(s.name)) {
-        map.set(s.name, { name: s.name, count: 0, totalTokens: 0 });
+      // Key: agent_source + name, so Codex tools and Claude skills don't merge accidentally
+      const agent = s.agent || "unknown";
+      const key = `${agent}:${s.name}`;
+      if (!map.has(key)) {
+        map.set(key, { name: s.name, agent, count: 0, totalTokens: 0 });
       }
-      const entry = map.get(s.name);
+      const entry = map.get(key);
       entry.count += s.count || 0;
       entry.totalTokens += s.totalTokens || 0;
     }
