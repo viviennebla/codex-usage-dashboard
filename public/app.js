@@ -179,7 +179,7 @@ function renderMetrics(snapshot) {
   }
   const badges = `${sourceBadge("Codex", ss.codex)} ${sourceBadge("Claude", ss.claude)}`;
 
-  $("meta").innerHTML = `${badges} <span style="margin-left:8px;color:#64748b;font-size:12px">· ${snapshot.generated_at}</span>`;
+  $("meta").innerHTML = `${badges} <span style="margin-left:8px;color:#64748b;font-size:12px">· ${fmtCompactTime(snapshot.generated_at)}</span>`;
   $("footer-stats").textContent = `${snapshot.totals?.eventCount || snapshot.diagnostics?.events_read || 0} API calls · ${snapshot.diagnostics?.files_read || 0} files`;
 }
 
@@ -1479,7 +1479,7 @@ async function loadSources(message = "") {
         d.display_name || d.detected_name || d.label || "",
         d.files_found ? `${d.files_found} files` : "",
         d.message || "",
-        d.addedAt || "",
+        d.addedAt ? `added ${fmtCompactTime(d.addedAt)}` : "",
       ].filter(Boolean).join(" · ");
       return `<div class="row">
         <div><div class="row-title">${esc(d.normalized_path || d.path)}</div><div class="row-detail">${esc(detail)}</div></div>
