@@ -40,6 +40,13 @@ function fmtPercent(value) {
   return `${Number(value).toFixed(1)}%`;
 }
 
+function fmtMoney(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "N/A";
+  const n = Number(value);
+  if (Math.abs(n) > 0 && Math.abs(n) < 0.01) return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(2)}`;
+}
+
 function fmtCompactTime(iso) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -140,6 +147,9 @@ function renderMetrics(snapshot) {
     metricCard("Today Tokens", fmtShort(today.totalTokens),
       `${fmtNumber(today.totalTokens)} total · ${today.eventCount || 0} events`,
       { accent: "accent" }),
+    metricCard("Today Cost", fmtMoney(today.costUSD),
+      snapshot.cost?.available ? `${fmtMoney(snapshot.totals?.costUSD)} total estimated` : "No price match",
+      { accent: today.costUSD != null ? "accent" : "" }),
     metricCard("Cache Hit Rate", cacheRate != null ? `${cacheRate}%` : "N/A",
       `${fmtShort(today.cacheReadTokens || 0)} cached · ${fmtShort(today.inputTokens || 0)} new`,
       { accent: cacheRate != null && cacheRate >= 80 ? "accent" : "" }),
@@ -534,7 +544,7 @@ function renderActive(snapshot) {
     rows.push(usageRow(
       active.displayName || active.sessionFile || "Unknown",
       `${active.projectName || "unknown"} · ${envLabel(active)} · last ${fmtCompactTime(active.lastActivity)}`,
-      fmtShort(active.totalTokens),
+      active.costUSD != null ? `${fmtShort(active.totalTokens)} · ${fmtMoney(active.costUSD)}` : fmtShort(active.totalTokens),
       { badge },
     ));
   } else {
@@ -620,7 +630,7 @@ function renderProjects(snapshot) {
   $("projects").innerHTML = projects.map((p) =>
     usageRow(
       p.projectName || "unknown",
-      `${envLabel(p)} · ${p.projectPath || ""}`,
+      `${envLabel(p)} · ${p.costUSD != null ? fmtMoney(p.costUSD) + " · " : ""}${p.projectPath || ""}`,
       fmtShort(p.totalTokens),
       { ratio: (p.totalTokens || 0) / total },
     )
@@ -728,6 +738,8 @@ function drawModelChart(snapshot) {
       outputTokens: usage.outputTokens || 0,
       totalTokens: (usage.cacheReadTokens || 0) + (usage.inputTokens || 0) + (usage.outputTokens || 0),
       requests: usage.eventCount || 0,
+      costUSD: usage.costUSD,
+      costFallback: usage.costPricingFallback,
     };
   });
 
@@ -914,6 +926,7 @@ function drawModelChart(snapshot) {
       `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#16a34a"></span> Cache: ${fmtNumber(bar.cacheTokens)} (${cachePct}%)</div>` +
       `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#4ade80"></span> Input: ${fmtNumber(bar.inputTokens)}</div>` +
       `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#3b82f6"></span> Output: ${fmtNumber(bar.outputTokens)}</div>` +
+      `<div class="chart-tooltip-row"><span style="color:#94a3b8">Cost: ${fmtMoney(bar.costUSD)}${bar.costFallback ? " (fallback)" : ""}</span></div>` +
       `<div class="chart-tooltip-row"><span style="color:#64748b">Requests: ${fmtNumber(bar.requests)}</span></div>`;
     tooltip.style.left = tx + "px";
     tooltip.style.top = ty + "px";
@@ -941,7 +954,11 @@ function renderModels(snapshot) {
   $("models").innerHTML = entries.map(([model, usage]) =>
     usageRow(
       model,
-      usage.isFallback ? "inferred" : "",
+      [
+        usage.isFallback ? "inferred model" : "",
+        usage.costUSD != null ? fmtMoney(usage.costUSD) : "",
+        usage.costPricingFallback ? `priced as ${usage.costPricingModel || "fallback"}` : "",
+      ].filter(Boolean).join(" · "),
       fmtShort(usage.totalTokens),
       { ratio: (usage.totalTokens || 0) / total },
     )
@@ -980,7 +997,7 @@ function renderSessions(snapshot) {
     usageRow(
       s.displayName || s.sessionFile || s.sessionId,
       `${s.projectName || "unknown"} · ${envLabel(s)} · ${fmtCompactTime(s.lastActivity)}`,
-      fmtShort(s.totalTokens),
+      s.costUSD != null ? `${fmtShort(s.totalTokens)} · ${fmtMoney(s.costUSD)}` : fmtShort(s.totalTokens),
     )
   ).join("");
 }
@@ -1298,6 +1315,14 @@ async function updateSyncTimes() {
     $("syncLastPull").textContent = state.lastPullAt
       ? `Last pull: ${fmtCompactTime(state.lastPullAt)}`
       : "Never pulled";
+    const statusParts = [];
+    if (state.lastPushStatus) statusParts.push(`push: ${state.lastPushStatus}`);
+    if (state.lastPullStatus) statusParts.push(`pull: ${state.lastPullStatus}`);
+    const message = state.lastError || state.lastPullError || state.lastPushError || state.lastMessage || "";
+    $("syncStatus").textContent = [statusParts.join(" · "), message].filter(Boolean).join(" — ");
+    $("syncStatus").style.color = state.lastError || state.lastPullError || state.lastPushError
+      ? "#ef4444"
+      : "#64748b";
     if (state.server && !syncServerUrl) {
       syncServerUrl = state.server;
       $("syncServer").value = state.server;
@@ -1333,6 +1358,7 @@ $("syncSave").addEventListener("click", async () => {
 $("syncPush").addEventListener("click", async () => {
   if (!syncServerUrl) { toast("Save server first", "error"); return; }
   $("syncStatus").textContent = "Pushing…";
+  $("syncStatus").style.color = "#64748b";
   try {
     const res = await fetch("/api/push-to-remote", {
       method: "POST",
@@ -1340,18 +1366,23 @@ $("syncPush").addEventListener("click", async () => {
       body: JSON.stringify({ server: syncServerUrl, token: syncToken }),
     });
     if (!res.ok) throw new Error(await res.text());
-    $("syncStatus").textContent = "Push OK ✓";
+    const result = await res.json();
+    $("syncStatus").textContent = `Push OK: ${result.device_id || "local device"}`;
+    $("syncStatus").style.color = "#22c55e";
     updateSyncTimes();
     toast("Push successful ✓", "success");
   } catch (err) {
     $("syncStatus").textContent = "Push failed: " + err.message;
+    $("syncStatus").style.color = "#ef4444";
     toast("Push failed: " + err.message, "error");
+    updateSyncTimes();
   }
 });
 
 $("syncPull").addEventListener("click", async () => {
   if (!syncServerUrl) { toast("Save server first", "error"); return; }
   $("syncStatus").textContent = "Pulling…";
+  $("syncStatus").style.color = "#64748b";
   try {
     const res = await fetch("/api/sync", {
       method: "POST",
@@ -1360,13 +1391,17 @@ $("syncPull").addEventListener("click", async () => {
     });
     if (!res.ok) throw new Error(await res.text());
     const result = await res.json();
-    $("syncStatus").textContent = result.message;
+    const failures = (result.failed || []).map((f) => `${f.deviceId}: ${f.error}`).join("; ");
+    $("syncStatus").textContent = failures ? `${result.message} · failed: ${failures}` : result.message;
+    $("syncStatus").style.color = failures ? "#f59e0b" : "#22c55e";
     updateSyncTimes();
     await refresh();
-    toast(result.message, "success");
+    toast(failures ? "Pull completed with failures" : result.message, failures ? "error" : "success");
   } catch (err) {
     $("syncStatus").textContent = "Pull failed: " + err.message;
+    $("syncStatus").style.color = "#ef4444";
     toast("Pull failed: " + err.message, "error");
+    updateSyncTimes();
   }
 });
 
@@ -1732,9 +1767,3 @@ $("skillSyncApply").addEventListener("click", async () => {
     $("skillSyncApply").disabled = false;
   }
 });
-
-$("skillSyncCancel").addEventListener("click", () => {
-  $("skillSyncList").innerHTML = "";
-  $("skillSyncActions").style.display = "none";
-});
-

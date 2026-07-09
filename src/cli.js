@@ -15,7 +15,7 @@ import {
   removeDeviceState,
 } from "./state.js";
 import { addDirectory, listDirectories, removeDirectory, readConfig } from "./config.js";
-import { pullFromServer } from "./sync.js";
+import { pullFromServer, recordSyncStatus } from "./sync.js";
 import { discoverSourceDiagnostics, inspectSource, sourceLabelMap } from "./sources.js";
 
 process.stdout.on("error", () => {});
@@ -291,12 +291,8 @@ function startWeb(options) {
           return;
         }
         const result = await pullFromServer(serverUrl);
-        // Record last pull time
-        const { readSyncState, writeSyncState } = await import("./sync.js");
+        const { readSyncState } = await import("./sync.js");
         const syncState = await readSyncState();
-        syncState.lastPullAt = new Date().toISOString();
-        syncState.server = serverUrl;
-        await writeSyncState(syncState);
 
         console.log(`[sync] ${result.message}`);
         sendJson(res, 200, {
@@ -304,6 +300,8 @@ function startWeb(options) {
           failed: result.failed,
           message: result.message,
           lastPullAt: syncState.lastPullAt,
+          status: syncState.lastPullStatus || null,
+          error: syncState.lastPullError || null,
         });
         return;
       }
@@ -493,6 +491,15 @@ function startWeb(options) {
           server: state.server || null,
           lastPushAt: state.lastPushAt || null,
           lastPullAt: state.lastPullAt || null,
+          lastPushStatus: state.lastPushStatus || null,
+          lastPullStatus: state.lastPullStatus || null,
+          lastPushMessage: state.lastPushMessage || null,
+          lastPullMessage: state.lastPullMessage || null,
+          lastPushError: state.lastPushError || null,
+          lastPullError: state.lastPullError || null,
+          lastStatusAt: state.lastStatusAt || null,
+          lastMessage: state.lastMessage || null,
+          lastError: state.lastError || null,
           devices: state.devices || {},
         });
         return;
@@ -558,6 +565,7 @@ function startWeb(options) {
         const remoteUrl = String(serverUrl).replace(/\/+$/, "");
         const headers = { "content-type": "application/json" };
         if (token) headers.authorization = `Bearer ${token}`;
+        await recordSyncStatus("push", "running", { server: remoteUrl, message: "Pushing local snapshot..." });
 
         try {
           const pushResp = await fetch(`${remoteUrl}/api/push`, {
@@ -566,21 +574,22 @@ function startWeb(options) {
             body: JSON.stringify({ device_id: deviceId, device_name: deviceId, snapshot }),
           });
           if (!pushResp.ok) {
-            sendError(res, pushResp.status, `Remote server returned ${pushResp.status}`);
+            const error = `Remote server returned ${pushResp.status}: ${await pushResp.text()}`;
+            await recordSyncStatus("push", "failed", { server: remoteUrl, error });
+            sendError(res, pushResp.status, error);
             return;
           }
           const result = await pushResp.json();
 
-          // Record last push time
-          const { readSyncState, writeSyncState } = await import("./sync.js");
-          const syncState = await readSyncState();
-          syncState.lastPushAt = new Date().toISOString();
-          syncState.server = serverUrl;
-          await writeSyncState(syncState);
+          const syncState = await recordSyncStatus("push", "success", {
+            server: remoteUrl,
+            message: `Pushed as ${result.device_id}`,
+          });
 
           console.log(`[push-to-remote] pushed to ${remoteUrl} as ${deviceId}`);
           sendJson(res, 200, { ok: true, device_id: result.device_id, lastPushAt: syncState.lastPushAt });
         } catch (err) {
+          await recordSyncStatus("push", "failed", { server: remoteUrl, error: err.message });
           sendError(res, 502, `Cannot reach server: ${err.message}`);
         }
         return;

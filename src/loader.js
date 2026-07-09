@@ -1,11 +1,13 @@
 import { loadCodexReports } from "./ccusage.js";
 import { loadClaudeReports } from "./claude.js";
 import { readConfig } from "./config.js";
+import { priceEvents } from "./pricing.js";
 import { resolveCodexHomes, resolveClaudeRoots, sourceLabelMap } from "./sources.js";
 
 function blankAggregate(extra = {}) {
   return {
     inputTokens: 0,
+    cacheCreationTokens: 0,
     cacheReadTokens: 0,
     outputTokens: 0,
     reasoningOutputTokens: 0,
@@ -19,12 +21,20 @@ function blankAggregate(extra = {}) {
   };
 }
 
+function addCost(target, value) {
+  if (value === null || value === undefined || value === "") return;
+  if (!Number.isFinite(Number(value))) return;
+  target.costUSD = (target.costUSD || 0) + Number(value);
+}
+
 function addToAggregate(target, event) {
   target.inputTokens += event.inputTokens || 0;
+  target.cacheCreationTokens += event.cacheCreationTokens || 0;
   target.cacheReadTokens += event.cacheReadTokens || 0;
   target.outputTokens += event.outputTokens || 0;
   target.reasoningOutputTokens += event.reasoningOutputTokens || 0;
   target.totalTokens += event.totalTokens || 0;
+  addCost(target, event.costUSD);
   target.eventCount += 1;
   target.firstActivity =
     !target.firstActivity || Date.parse(event.timestamp) < Date.parse(target.firstActivity)
@@ -38,6 +48,7 @@ function addToAggregate(target, event) {
   const model = event.model || "unknown";
   target.models[model] ||= {
     inputTokens: 0,
+    cacheCreationTokens: 0,
     cacheReadTokens: 0,
     outputTokens: 0,
     reasoningOutputTokens: 0,
@@ -47,11 +58,15 @@ function addToAggregate(target, event) {
   };
   const m = target.models[model];
   m.inputTokens += event.inputTokens || 0;
+  m.cacheCreationTokens += event.cacheCreationTokens || 0;
   m.cacheReadTokens += event.cacheReadTokens || 0;
   m.outputTokens += event.outputTokens || 0;
   m.reasoningOutputTokens += event.reasoningOutputTokens || 0;
   m.totalTokens += event.totalTokens || 0;
+  addCost(m, event.costUSD);
   m.isFallback = m.isFallback || !event.model || event.model === "unknown";
+  m.costPricingFallback = m.costPricingFallback || Boolean(event.costPricingFallback);
+  if (event.costPricingModel) m.costPricingModel = event.costPricingModel;
 }
 
 function buildRows(events, keyOf, extraOf) {
@@ -87,10 +102,12 @@ function buildTotals(events) {
  */
 function mergeAggregateRow(target, row) {
   target.inputTokens += row.inputTokens || 0;
+  target.cacheCreationTokens += row.cacheCreationTokens || 0;
   target.cacheReadTokens += row.cacheReadTokens || 0;
   target.outputTokens += row.outputTokens || 0;
   target.reasoningOutputTokens += row.reasoningOutputTokens || 0;
   target.totalTokens += row.totalTokens || 0;
+  addCost(target, row.costUSD);
   target.eventCount += row.eventCount || 0;
   target.firstActivity =
     !target.firstActivity || Date.parse(row.firstActivity) < Date.parse(target.firstActivity)
@@ -104,15 +121,17 @@ function mergeAggregateRow(target, row) {
   if (row.models) {
     for (const [model, usage] of Object.entries(row.models)) {
       target.models[model] ||= {
-        inputTokens: 0, cacheReadTokens: 0, outputTokens: 0,
+        inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0,
         reasoningOutputTokens: 0, totalTokens: 0, costUSD: null, isFallback: false,
       };
       const m = target.models[model];
       m.inputTokens += usage.inputTokens || 0;
+      m.cacheCreationTokens += usage.cacheCreationTokens || 0;
       m.cacheReadTokens += usage.cacheReadTokens || 0;
       m.outputTokens += usage.outputTokens || 0;
       m.reasoningOutputTokens += usage.reasoningOutputTokens || 0;
       m.totalTokens += usage.totalTokens || 0;
+      addCost(m, usage.costUSD);
       m.isFallback = m.isFallback || usage.isFallback;
     }
   }
@@ -174,9 +193,11 @@ export async function loadAllReports(options = {}) {
     loadClaudeReports({ ...options, claudeRoots, sourceLabels }),
   ]);
 
-  const allEvents = [...(codex.events || []), ...(claude.events || [])].sort(
+  const rawEvents = [...(codex.events || []), ...(claude.events || [])].sort(
     (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
   );
+  const priced = priceEvents(rawEvents, cfg, options);
+  const allEvents = priced.events;
 
   // Lightweight mode: skip heavy aggregation, return only events (for fast limit refresh)
   if (options.lightweight) {
@@ -202,7 +223,21 @@ export async function loadAllReports(options = {}) {
     };
   }
 
-  const daily = mergeDaily([codex, claude]);
+  const daily = sortByDate(buildRows(
+    allEvents,
+    (event) => {
+      const tz = options.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: tz,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(new Date(event.timestamp));
+      const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+      return `${values.year}-${values.month}-${values.day}`;
+    },
+    (_event, date) => ({ date }),
+  ));
   const totals = buildTotals(allEvents);
 
   const sessions = buildRows(
@@ -277,6 +312,7 @@ export async function loadAllReports(options = {}) {
         codex: { filesRead: codex.tool?.filesRead || 0, events: codex.events?.length || 0 },
         claude: { filesRead: claude.tool?.filesRead || 0, events: claude.events?.length || 0 },
       },
+      pricing: priced.meta,
     },
   };
 }

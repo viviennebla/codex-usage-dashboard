@@ -5,6 +5,7 @@ function number(value) {
 function blankAggregate() {
   return {
     inputTokens: 0,
+    cacheCreationTokens: 0,
     cacheReadTokens: 0,
     outputTokens: 0,
     reasoningOutputTokens: 0,
@@ -17,11 +18,18 @@ function blankAggregate() {
   };
 }
 
+function addCost(target, value) {
+  if (value === null || value === undefined || value === "") return;
+  if (!Number.isFinite(Number(value))) return;
+  target.costUSD = (target.costUSD || 0) + Number(value);
+}
+
 function sumModels(target, source) {
   if (!source || typeof source !== "object") return;
   for (const [model, usage] of Object.entries(source)) {
     target[model] ||= {
       inputTokens: 0,
+      cacheCreationTokens: 0,
       cacheReadTokens: 0,
       outputTokens: 0,
       reasoningOutputTokens: 0,
@@ -31,21 +39,27 @@ function sumModels(target, source) {
       isFallback: false,
     };
     target[model].inputTokens += number(usage.inputTokens);
+    target[model].cacheCreationTokens += number(usage.cacheCreationTokens);
     target[model].cacheReadTokens += number(usage.cacheReadTokens);
     target[model].outputTokens += number(usage.outputTokens);
     target[model].reasoningOutputTokens += number(usage.reasoningOutputTokens);
     target[model].totalTokens += number(usage.totalTokens);
+    addCost(target[model], usage.costUSD);
     target[model].eventCount += number(usage.eventCount);
     target[model].isFallback = target[model].isFallback || Boolean(usage.isFallback);
+    target[model].costPricingFallback = target[model].costPricingFallback || Boolean(usage.costPricingFallback);
+    if (usage.costPricingModel) target[model].costPricingModel = usage.costPricingModel;
   }
 }
 
 function addToAggregate(target, row) {
   target.inputTokens += number(row.inputTokens);
+  target.cacheCreationTokens += number(row.cacheCreationTokens);
   target.cacheReadTokens += number(row.cacheReadTokens);
   target.outputTokens += number(row.outputTokens);
   target.reasoningOutputTokens += number(row.reasoningOutputTokens);
   target.totalTokens += number(row.totalTokens);
+  addCost(target, row.costUSD);
   target.eventCount += number(row.eventCount);
   if (row.models) sumModels(target.models, row.models);
 
@@ -283,7 +297,10 @@ export function mergeSnapshots(deviceEntries) {
     active_session: null, // multi-device: see per_device
     filters: { since: null, until: null, timezone: null },
     confidence: "merged_from_devices",
-    cost: { available: false, confidence: "not_priced" },
+    cost: {
+      available: [...deviceEntries].some(([, { snapshot }]) => Boolean(snapshot?.cost?.available)),
+      confidence: "merged_estimate",
+    },
     diagnostics: {
       device_count: deviceEntries.size,
     },

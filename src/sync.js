@@ -10,7 +10,11 @@ const SYNC_FILE = "state/sync.json";
 export async function readSyncState() {
   try {
     const raw = await readFile(SYNC_FILE, "utf8");
-    return JSON.parse(raw);
+    return {
+      lastSyncedAt: null,
+      devices: {},
+      ...JSON.parse(raw),
+    };
   } catch {
     return { lastSyncedAt: null, devices: {} };
   }
@@ -22,6 +26,28 @@ export async function readSyncState() {
 export async function writeSyncState(state) {
   await mkdir(dirname(SYNC_FILE), { recursive: true });
   await writeFile(SYNC_FILE, JSON.stringify(state, null, 2) + "\n", "utf8");
+}
+
+export async function recordSyncStatus(kind, status, details = {}) {
+  const state = await readSyncState();
+  const now = new Date().toISOString();
+  state.server = details.server || state.server || null;
+  state.lastStatusAt = now;
+  state.lastMessage = details.message || null;
+  state.lastError = details.error || null;
+  if (kind === "push") {
+    state.lastPushStatus = status;
+    state.lastPushMessage = details.message || null;
+    state.lastPushError = details.error || null;
+    if (status === "success") state.lastPushAt = now;
+  } else if (kind === "pull") {
+    state.lastPullStatus = status;
+    state.lastPullMessage = details.message || null;
+    state.lastPullError = details.error || null;
+    if (status === "success" || status === "partial") state.lastPullAt = now;
+  }
+  await writeSyncState(state);
+  return state;
 }
 
 /**
@@ -40,17 +66,28 @@ export async function pullFromServer(serverUrl) {
   const baseUrl = String(serverUrl).replace(/\/+$/, "");
   const synced = [];
   const failed = [];
+  await recordSyncStatus("pull", "running", { server: baseUrl, message: "Pulling from server..." });
 
   // 1. Fetch device list
   let devices;
   try {
     const res = await fetch(`${baseUrl}/api/devices`);
     if (!res.ok) {
-      return { synced, failed, message: `Failed to fetch device list: HTTP ${res.status}` };
+      const message = `Failed to fetch device list: HTTP ${res.status}`;
+      await recordSyncStatus("pull", "failed", { server: baseUrl, error: message });
+      return { synced, failed, message };
     }
     devices = await res.json();
   } catch (err) {
-    return { synced, failed, message: `Failed to connect to ${baseUrl}: ${err.message}` };
+    const message = `Failed to connect to ${baseUrl}: ${err.message}`;
+    await recordSyncStatus("pull", "failed", { server: baseUrl, error: message });
+    return { synced, failed, message };
+  }
+
+  if (!Array.isArray(devices)) {
+    const message = "Remote server returned an invalid device list";
+    await recordSyncStatus("pull", "failed", { server: baseUrl, error: message });
+    return { synced, failed, message };
   }
 
   // 2. Clean up local orphan snapshots (not on server anymore)
@@ -66,8 +103,10 @@ export async function pullFromServer(serverUrl) {
     }
   }
 
-  if (!Array.isArray(devices) || devices.length === 0) {
-    return { synced, failed, message: "No remote devices found" };
+  if (devices.length === 0) {
+    const message = "No remote devices found";
+    await recordSyncStatus("pull", "success", { server: baseUrl, message });
+    return { synced, failed, message };
   }
 
   // 3. Fetch each device's snapshot (skip self)
@@ -114,6 +153,11 @@ export async function pullFromServer(serverUrl) {
   const message = synced.length > 0
     ? `Synced ${synced.length} device(s) from ${baseUrl}`
     : "No devices were synced";
+  const status = failed.length > 0 ? "partial" : "success";
+  const error = failed.length > 0
+    ? failed.map((f) => `${f.deviceId}: ${f.error}`).join("; ")
+    : null;
+  await recordSyncStatus("pull", status, { server: baseUrl, message, error });
 
   return { synced, failed, message };
 }

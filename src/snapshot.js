@@ -31,6 +31,7 @@ function number(value) {
 function blankAggregate(extra = {}) {
   return {
     inputTokens: 0,
+    cacheCreationTokens: 0,
     cacheReadTokens: 0,
     outputTokens: 0,
     reasoningOutputTokens: 0,
@@ -44,12 +45,20 @@ function blankAggregate(extra = {}) {
   };
 }
 
+function addCost(target, value) {
+  if (value === null || value === undefined || value === "") return;
+  if (!Number.isFinite(Number(value))) return;
+  target.costUSD = (target.costUSD || 0) + Number(value);
+}
+
 function addEventToAggregate(target, event) {
   target.inputTokens += number(event.inputTokens);
+  target.cacheCreationTokens += number(event.cacheCreationTokens);
   target.cacheReadTokens += number(event.cacheReadTokens);
   target.outputTokens += number(event.outputTokens);
   target.reasoningOutputTokens += number(event.reasoningOutputTokens);
   target.totalTokens += number(event.totalTokens);
+  addCost(target, event.costUSD);
   target.eventCount += 1;
   target.firstActivity =
     !target.firstActivity || Date.parse(event.timestamp) < Date.parse(target.firstActivity)
@@ -82,6 +91,7 @@ function sumModelBreakdown(rows) {
     for (const [model, usage] of Object.entries(row.models || {})) {
       const current = models.get(model) || {
         inputTokens: 0,
+        cacheCreationTokens: 0,
         cacheReadTokens: 0,
         outputTokens: 0,
         reasoningOutputTokens: 0,
@@ -91,11 +101,15 @@ function sumModelBreakdown(rows) {
         isFallback: false,
       };
       current.inputTokens += number(usage.inputTokens);
+      current.cacheCreationTokens += number(usage.cacheCreationTokens);
       current.cacheReadTokens += number(usage.cacheReadTokens);
       current.outputTokens += number(usage.outputTokens);
       current.reasoningOutputTokens += number(usage.reasoningOutputTokens);
       current.totalTokens += number(usage.totalTokens);
+      addCost(current, usage.costUSD);
       current.isFallback = current.isFallback || Boolean(usage.isFallback);
+      current.costPricingFallback = current.costPricingFallback || Boolean(usage.costPricingFallback);
+      if (usage.costPricingModel) current.costPricingModel = usage.costPricingModel;
       models.set(model, current);
     }
   }
@@ -369,9 +383,12 @@ export function buildSnapshot(reports, options = {}) {
     },
     confidence: "local_log_parse",
     cost: {
-      available: false,
-      confidence: "not_priced",
-      note: "Native Codex logs contain token counts and rate limits, but no local price table is applied yet.",
+      available: Boolean(reports.tool?.pricing?.available),
+      confidence: reports.tool?.pricing?.confidence || "not_priced",
+      note: reports.tool?.pricing?.available
+        ? "Costs are estimates from local token logs and configured per-model pricing."
+        : "No matching price table was available for the parsed token events.",
+      pricing: reports.tool?.pricing || null,
     },
     filters: {
       since: options.since || null,

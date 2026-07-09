@@ -6,7 +6,7 @@ import { exists } from "node:fs";
 const CONFIG_PATH_DEFAULT = join(homedir(), ".codex-usage.json");
 
 function defaultConfig() {
-  return { version: 1, directories: [] };
+  return { version: 1, directories: [], pricing: {} };
 }
 
 function existsAsync(path) {
@@ -27,6 +27,7 @@ export async function readConfig(configPath = CONFIG_PATH_DEFAULT) {
         label: d.label || null,
         addedAt: d.addedAt || null,
       })),
+      pricing: cfg.pricing && typeof cfg.pricing === "object" ? cfg.pricing : {},
     };
   } catch {
     return defaultConfig();
