@@ -49,16 +49,18 @@ function fmtCompactTime(iso) {
   if (diffMin < 0) {
     const remaining = Math.abs(diffMin);
     if (remaining < 60) return `in ${remaining}m`;
-    const remainingH = Math.round(remaining / 60);
-    if (remainingH < 48) return `in ${remainingH}h`;
+    const remainingH = Math.floor(remaining / 60);
+    const remainingM = remaining % 60;
+    if (remainingH < 48) return remainingM > 0 ? `in ${remainingH}h ${remainingM}m` : `in ${remainingH}h`;
     const remainingD = Math.round(remaining / 1440);
     return `in ${remainingD}d`;
   }
-  // Past date — show elapsed
+  // Past date — show elapsed, minute-precise within 48h
   if (diffMin < 1) return "just now";
   if (diffMin < 60) return `${diffMin}m ago`;
-  const diffH = Math.round(diffMin / 60);
-  if (diffH < 24) return `${diffH}h ago`;
+  const diffH = Math.floor(diffMin / 60);
+  const remMin = diffMin % 60;
+  if (diffH < 48) return remMin > 0 ? `${diffH}h ${remMin}m ago` : `${diffH}h ago`;
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
