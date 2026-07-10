@@ -4,6 +4,20 @@ import { hostname } from "node:os";
 
 const SYNC_FILE = "state/sync.json";
 
+function snapshotTime(snapshot) {
+  const value = Date.parse(snapshot?.generated_at || "");
+  return Number.isFinite(value) ? value : null;
+}
+
+export function shouldReplaceSnapshot(existing, incoming) {
+  if (!existing) return true;
+  const existingTime = snapshotTime(existing);
+  const incomingTime = snapshotTime(incoming);
+  if (incomingTime === null) return false;
+  if (existingTime === null) return true;
+  return incomingTime > existingTime;
+}
+
 /**
  * Read the current sync state.
  */
@@ -60,11 +74,12 @@ export async function recordSyncStatus(kind, status, details = {}) {
  * 4. Record sync metadata in state/sync.json.
  *
  * @param {string} serverUrl e.g. "http://your-server:34777"
- * @returns {{ synced: string[], failed: {deviceId: string, error: string}[], message: string }}
+ * @returns {{ synced: string[], skipped: {deviceId: string, reason: string}[], failed: {deviceId: string, error: string}[], message: string }}
  */
 export async function pullFromServer(serverUrl) {
   const baseUrl = String(serverUrl).replace(/\/+$/, "");
   const synced = [];
+  const skipped = [];
   const failed = [];
   await recordSyncStatus("pull", "running", { server: baseUrl, message: "Pulling from server..." });
 
@@ -75,19 +90,19 @@ export async function pullFromServer(serverUrl) {
     if (!res.ok) {
       const message = `Failed to fetch device list: HTTP ${res.status}`;
       await recordSyncStatus("pull", "failed", { server: baseUrl, error: message });
-      return { synced, failed, message };
+      return { synced, skipped, failed, message };
     }
     devices = await res.json();
   } catch (err) {
     const message = `Failed to connect to ${baseUrl}: ${err.message}`;
     await recordSyncStatus("pull", "failed", { server: baseUrl, error: message });
-    return { synced, failed, message };
+    return { synced, skipped, failed, message };
   }
 
   if (!Array.isArray(devices)) {
     const message = "Remote server returned an invalid device list";
     await recordSyncStatus("pull", "failed", { server: baseUrl, error: message });
-    return { synced, failed, message };
+    return { synced, skipped, failed, message };
   }
 
   // 2. Clean up local orphan snapshots (not on server anymore)
@@ -106,7 +121,7 @@ export async function pullFromServer(serverUrl) {
   if (devices.length === 0) {
     const message = "No remote devices found";
     await recordSyncStatus("pull", "success", { server: baseUrl, message });
-    return { synced, failed, message };
+    return { synced, skipped, failed, message };
   }
 
   // 3. Fetch each device's snapshot (skip self)
@@ -125,6 +140,11 @@ export async function pullFromServer(serverUrl) {
       }
       const snapshot = await res.json();
       const deviceName = device.device_name || deviceId;
+      const existing = localDevices.get(deviceId)?.snapshot || null;
+      if (!shouldReplaceSnapshot(existing, snapshot)) {
+        skipped.push({ deviceId, reason: "local_snapshot_is_newer_or_remote_timestamp_missing" });
+        continue;
+      }
 
       // Write to state/<deviceId>.json (inline to avoid importing writeDeviceState
       // which would also store _device_id/_device_name — we import it for reuse)
@@ -150,8 +170,11 @@ export async function pullFromServer(serverUrl) {
     }
   }
 
-  const message = synced.length > 0
-    ? `Synced ${synced.length} device(s) from ${baseUrl}`
+  const messageParts = [];
+  if (synced.length > 0) messageParts.push(`Synced ${synced.length} device(s)`);
+  if (skipped.length > 0) messageParts.push(`kept ${skipped.length} newer local snapshot(s)`);
+  const message = messageParts.length > 0
+    ? `${messageParts.join("; ")} from ${baseUrl}`
     : "No devices were synced";
   const status = failed.length > 0 ? "partial" : "success";
   const error = failed.length > 0
@@ -159,5 +182,5 @@ export async function pullFromServer(serverUrl) {
     : null;
   await recordSyncStatus("pull", status, { server: baseUrl, message, error });
 
-  return { synced, failed, message };
+  return { synced, skipped, failed, message };
 }

@@ -203,7 +203,8 @@ function startWeb(options) {
           // Local snapshot is the base; only merge other devices' data
           const allDevices = new Map(remoteDevices);
           allDevices.set(localName, { deviceName: localName, snapshot });
-          const merged = mergeSnapshots(allDevices);
+          const cfg = await readConfig();
+          const merged = mergeSnapshots(allDevices, cfg);
 
           // Carry over device-specific fields from local snapshot
           merged.skills = snapshot.skills || [];
@@ -297,6 +298,7 @@ function startWeb(options) {
         console.log(`[sync] ${result.message}`);
         sendJson(res, 200, {
           synced: result.synced,
+          skipped: result.skipped,
           failed: result.failed,
           message: result.message,
           lastPullAt: syncState.lastPullAt,

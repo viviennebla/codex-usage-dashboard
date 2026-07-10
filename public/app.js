@@ -142,13 +142,17 @@ function renderMetrics(snapshot) {
   // Cache hit rate
   const cacheTotal = (today.cacheReadTokens || 0) + (today.inputTokens || 0);
   const cacheRate = cacheTotal > 0 ? Math.round((today.cacheReadTokens || 0) / cacheTotal * 100) : null;
+  const pricingUpdatedAt = snapshot.cost?.pricing?.updated_at;
+  const costDetail = snapshot.cost?.available
+    ? `${fmtMoney(snapshot.totals?.costUSD)} API-equivalent total${pricingUpdatedAt ? ` · prices ${pricingUpdatedAt.slice(0, 10)}` : ""}`
+    : "No price match";
 
   const items = [
     metricCard("Today Tokens", fmtShort(today.totalTokens),
       `${fmtNumber(today.totalTokens)} total · ${today.eventCount || 0} events`,
       { accent: "accent" }),
     metricCard("Today Cost", fmtMoney(today.costUSD),
-      snapshot.cost?.available ? `${fmtMoney(snapshot.totals?.costUSD)} total estimated` : "No price match",
+      costDetail,
       { accent: today.costUSD != null ? "accent" : "" }),
     metricCard("Cache Hit Rate", cacheRate != null ? `${cacheRate}%` : "N/A",
       `${fmtShort(today.cacheReadTokens || 0)} cached · ${fmtShort(today.inputTokens || 0)} new`,
@@ -740,6 +744,7 @@ function drawModelChart(snapshot) {
       requests: usage.eventCount || 0,
       costUSD: usage.costUSD,
       costFallback: usage.costPricingFallback,
+      costPricingModel: usage.costPricingModel,
     };
   });
 
@@ -926,7 +931,7 @@ function drawModelChart(snapshot) {
       `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#16a34a"></span> Cache: ${fmtNumber(bar.cacheTokens)} (${cachePct}%)</div>` +
       `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#4ade80"></span> Input: ${fmtNumber(bar.inputTokens)}</div>` +
       `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#3b82f6"></span> Output: ${fmtNumber(bar.outputTokens)}</div>` +
-      `<div class="chart-tooltip-row"><span style="color:#94a3b8">Cost: ${fmtMoney(bar.costUSD)}${bar.costFallback ? " (fallback)" : ""}</span></div>` +
+      `<div class="chart-tooltip-row"><span style="color:#94a3b8">Cost: ${fmtMoney(bar.costUSD)}${bar.costFallback ? ` (priced as ${esc(bar.costPricingModel || "fallback")})` : ""}</span></div>` +
       `<div class="chart-tooltip-row"><span style="color:#64748b">Requests: ${fmtNumber(bar.requests)}</span></div>`;
     tooltip.style.left = tx + "px";
     tooltip.style.top = ty + "px";
