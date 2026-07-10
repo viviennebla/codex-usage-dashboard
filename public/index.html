@@ -106,6 +106,34 @@
 
       <section class="metrics" id="metrics" aria-live="polite"></section>
 
+      <div class="grid overview-grid">
+        <section class="panel limits-panel">
+          <div class="panel-head">
+            <h2>Rate Limits</h2>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span class="panel-sub" id="limitsSummary">Loading...</span>
+            </div>
+          </div>
+          <div id="limits"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Model Breakdown</h2>
+            <div style="display:flex;align-items:center;gap:6px">
+              <button id="modelPrev" class="btn" style="font-size:11px;padding:2px 6px" title="Show today model usage">&#8593;</button>
+              <span class="panel-sub" id="modelViewLabel">today</span>
+              <button id="modelNext" class="btn" style="font-size:11px;padding:2px 6px" title="Show total model usage">&#8595;</button>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="modelsChart" width="800" height="360" aria-label="Model usage bar chart" role="img"></canvas>
+            <div class="chart-tooltip" id="modelsChartTooltip" hidden></div>
+          </div>
+          <div id="models"></div>
+        </section>
+      </div>
+
       <section class="panel chart-panel">
         <div class="panel-head">
           <h2>Token Trend</h2>
@@ -139,31 +167,6 @@
 
         <section class="panel">
           <div class="panel-head">
-            <h2>Model Breakdown</h2>
-            <span class="panel-sub">Tokens + API calls per model</span>
-          </div>
-          <div class="chart-wrap">
-            <canvas id="modelsChart" width="800" height="360" aria-label="Model usage bar chart" role="img"></canvas>
-            <div class="chart-tooltip" id="modelsChartTooltip" hidden></div>
-          </div>
-          <div id="models"></div>
-        </section>
-      </div>
-
-      <div class="grid">
-        <section class="panel">
-          <div class="panel-head">
-            <h2>Active Session</h2>
-            <div style="display:flex;align-items:center;gap:6px">
-              <button id="refreshLimits" class="btn" style="font-size:11px;padding:2px 8px" title="Refresh rate limits only">↻ Limits</button>
-              <span class="panel-sub">Session &amp; rate limits</span>
-            </div>
-          </div>
-          <div id="active"></div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head">
             <h2>Projects</h2>
             <span class="panel-sub">Usage by workspace</span>
           </div>
@@ -174,10 +177,13 @@
       <div class="grid">
         <section class="panel">
           <div class="panel-head">
-            <h2>Tools &amp; Skills</h2>
-            <span class="panel-sub">Codex MCP tools + Claude skills</span>
+            <h2>Active Session</h2>
+            <div style="display:flex;align-items:center;gap:6px">
+              <button id="refreshLimits" class="btn" style="font-size:11px;padding:2px 8px" title="Refresh rate limits only">↻ Limits</button>
+              <span class="panel-sub">Current work and burn rate</span>
+            </div>
           </div>
-          <div id="skills"></div>
+          <div id="active"></div>
         </section>
 
         <section class="panel">
@@ -186,6 +192,24 @@
             <span class="panel-sub">Largest consumers</span>
           </div>
           <div id="sessions"></div>
+        </section>
+      </div>
+
+      <div class="grid utility-grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Environments</h2>
+            <span class="panel-sub" id="environmentsSummary">Loading...</span>
+          </div>
+          <div id="environments"></div>
+        </section>
+
+        <section class="panel tools-panel">
+          <div class="panel-head">
+            <h2>Tool Calls</h2>
+            <span class="panel-sub">Codex tools + Claude skill invocations</span>
+          </div>
+          <div id="skills"></div>
         </section>
       </div>
 

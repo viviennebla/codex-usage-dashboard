@@ -360,6 +360,46 @@ function normalizeRateLimits(raw) {
   };
 }
 
+function toolCallFromPayload(payload = {}) {
+  if (payload.type === "mcp_tool_call_end" && payload.invocation?.tool) {
+    const server = payload.invocation.server || "unknown";
+    return {
+      name: server !== "unknown" ? `${server}/${payload.invocation.tool}` : payload.invocation.tool,
+      callId: payload.call_id || payload.callId || null,
+    };
+  }
+
+  if ((payload.type === "function_call" || payload.type === "custom_tool_call") && payload.name) {
+    return {
+      name: payload.name,
+      callId: payload.call_id || payload.callId || null,
+    };
+  }
+
+  return null;
+}
+
+function addToolCall(toolCounts, seenCallIds, payload) {
+  const call = toolCallFromPayload(payload);
+  if (!call) return;
+  if (call.callId && seenCallIds.has(call.callId)) return;
+  if (call.callId) seenCallIds.add(call.callId);
+
+  const existing = toolCounts.get(call.name);
+  if (existing) {
+    existing.count += 1;
+  } else {
+    toolCounts.set(call.name, { name: call.name, count: 1, agent: "codex" });
+  }
+}
+
+export function collectCodexToolCalls(payloads = []) {
+  const toolCounts = new Map();
+  const seenCallIds = new Set();
+  for (const payload of payloads) addToolCall(toolCounts, seenCallIds, payload);
+  return [...toolCounts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
 async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, options) {
   const events = [];
   const meta = {
@@ -382,7 +422,8 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
   let currentModel = null;
   let previousTotalUsage = null;
   let lineNumber = 0;
-  const tools = [];
+  const toolCounts = new Map();
+  const seenToolCallIds = new Set();
 
   const stream = createReadStream(fileInfo.file, { encoding: "utf8" });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
@@ -413,18 +454,9 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
       meta.inferredTitle = titleFromUserMessage(payload.message);
     }
 
-    // Collect MCP tool calls
-    if (payload.type === "mcp_tool_call_end" && payload.invocation?.tool) {
-      const toolName = payload.invocation.tool;
-      const serverName = payload.invocation.server || "unknown";
-      const displayName = serverName !== "unknown" ? `${serverName}/${toolName}` : toolName;
-      const existing = tools.find((t) => t.name === displayName);
-      if (existing) {
-        existing.count += 1;
-      } else {
-        tools.push({ name: displayName, count: 1, agent: "codex" });
-      }
-    }
+    // Codex Desktop writes native tools as response_item/function_call and
+    // response_item/custom_tool_call; older MCP calls use mcp_tool_call_end.
+    addToolCall(toolCounts, seenToolCallIds, payload);
 
     if (payload.type !== "token_count") continue;
 
@@ -476,7 +508,7 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
     });
   }
 
-  return { events, tools };
+  return { events, tools: [...toolCounts.values()] };
 }
 
 function blankAggregate(extra = {}) {

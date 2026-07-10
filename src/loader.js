@@ -12,9 +12,9 @@ function blankAggregate(extra = {}) {
     outputTokens: 0,
     reasoningOutputTokens: 0,
     totalTokens: 0,
+    eventCount: 0,
     costUSD: null,
     models: {},
-    eventCount: 0,
     firstActivity: null,
     lastActivity: null,
     ...extra,
@@ -53,6 +53,7 @@ function addToAggregate(target, event) {
     outputTokens: 0,
     reasoningOutputTokens: 0,
     totalTokens: 0,
+    eventCount: 0,
     costUSD: null,
     isFallback: false,
   };
@@ -63,6 +64,7 @@ function addToAggregate(target, event) {
   m.outputTokens += event.outputTokens || 0;
   m.reasoningOutputTokens += event.reasoningOutputTokens || 0;
   m.totalTokens += event.totalTokens || 0;
+  m.eventCount = (m.eventCount || 0) + 1;
   addCost(m, event.costUSD);
   m.isFallback = m.isFallback || !event.model || event.model === "unknown";
   m.costPricingFallback = m.costPricingFallback || Boolean(event.costPricingFallback);
@@ -95,6 +97,10 @@ function buildTotals(events) {
   return totals;
 }
 
+export function aggregateEvents(events = []) {
+  return buildTotals(events);
+}
+
 /**
  * Merge a pre-aggregated row (e.g., a daily summary from one source) into a
  * combined aggregate.  Unlike addToAggregate this sums eventCount from the
@@ -122,7 +128,7 @@ function mergeAggregateRow(target, row) {
     for (const [model, usage] of Object.entries(row.models)) {
       target.models[model] ||= {
         inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0,
-        reasoningOutputTokens: 0, totalTokens: 0, costUSD: null, isFallback: false,
+        reasoningOutputTokens: 0, totalTokens: 0, eventCount: 0, costUSD: null, isFallback: false,
       };
       const m = target.models[model];
       m.inputTokens += usage.inputTokens || 0;
@@ -131,6 +137,7 @@ function mergeAggregateRow(target, row) {
       m.outputTokens += usage.outputTokens || 0;
       m.reasoningOutputTokens += usage.reasoningOutputTokens || 0;
       m.totalTokens += usage.totalTokens || 0;
+      m.eventCount = (m.eventCount || 0) + (usage.eventCount || 0);
       addCost(m, usage.costUSD);
       m.isFallback = m.isFallback || usage.isFallback;
     }
@@ -288,7 +295,7 @@ export async function loadAllReports(options = {}) {
     ...(claude.tool?.dataRoots || []),
   ];
 
-  // Merge skill stats from claude (codex currently has none)
+  // Merge Codex tool calls and Claude skill invocations without conflating them.
   const skills = mergeSkillStats([
     codex.skills,
     claude.skills,

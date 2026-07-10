@@ -392,6 +392,24 @@ body {
   margin-top: var(--space-4);
 }
 
+.model-chart-enter {
+  animation: model-chart-enter var(--duration-base) var(--ease-out);
+  transform-origin: center bottom;
+}
+
+@keyframes model-chart-enter {
+  from { opacity: 0.28; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.overview-grid {
+  margin-bottom: var(--space-4);
+}
+
+.utility-grid .tools-panel {
+  margin-top: 0;
+}
+
 /* ── Row (list item) ────────────────────── */
 
 .row {

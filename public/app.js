@@ -131,6 +131,7 @@ function emptyState(message) {
 
 function renderMetrics(snapshot) {
   const today = snapshot.today || {};
+  const totals = snapshot.totals || {};
   const limits = snapshot.limits || {};
   const burn = snapshot.burn_rate || {};
   const topProject = snapshot.top_projects?.[0] || {};
@@ -142,13 +143,21 @@ function renderMetrics(snapshot) {
   // Cache hit rate
   const cacheTotal = (today.cacheReadTokens || 0) + (today.inputTokens || 0);
   const cacheRate = cacheTotal > 0 ? Math.round((today.cacheReadTokens || 0) / cacheTotal * 100) : null;
+  const totalCacheTokens = (totals.cacheReadTokens || 0) + (totals.inputTokens || 0);
+  const totalCacheRate = totalCacheTokens > 0
+    ? Math.round((totals.cacheReadTokens || 0) / totalCacheTokens * 100)
+    : null;
+  const pricingUpdatedAt = snapshot.cost?.pricing?.updated_at;
+  const costDetail = snapshot.cost?.available
+    ? `${fmtMoney(snapshot.totals?.costUSD)} API-equivalent total${pricingUpdatedAt ? ` · prices ${pricingUpdatedAt.slice(0, 10)}` : ""}`
+    : "No price match";
 
   const items = [
     metricCard("Today Tokens", fmtShort(today.totalTokens),
       `${fmtNumber(today.totalTokens)} total · ${today.eventCount || 0} events`,
       { accent: "accent" }),
     metricCard("Today Cost", fmtMoney(today.costUSD),
-      snapshot.cost?.available ? `${fmtMoney(snapshot.totals?.costUSD)} total estimated` : "No price match",
+      costDetail,
       { accent: today.costUSD != null ? "accent" : "" }),
     metricCard("Cache Hit Rate", cacheRate != null ? `${cacheRate}%` : "N/A",
       `${fmtShort(today.cacheReadTokens || 0)} cached · ${fmtShort(today.inputTokens || 0)} new`,
@@ -161,6 +170,13 @@ function renderMetrics(snapshot) {
       {}),
   ];
 
+  items[2] = metricCard(
+    "Cache Hit Rate",
+    cacheRate != null ? `${cacheRate}%` : "N/A",
+    totalCacheRate != null ? `${totalCacheRate}% all-time` : "No all-time sample",
+    { accent: cacheRate != null && cacheRate >= 80 ? "accent" : "" },
+  );
+  items.length = 4;
   $("metrics").innerHTML = items.join("");
 
   // Source status badges (hour-precise)
@@ -532,7 +548,7 @@ function limitRow(label, pct, windowMin, resetsAt, generatedAt, planType, limitU
   </div>`;
 }
 
-function renderActive(snapshot) {
+function renderLimits(snapshot) {
   const active = snapshot.active_session;
   const limits = snapshot.limits || {};
   const generatedAt = snapshot.generated_at || null;
@@ -581,6 +597,36 @@ function renderActive(snapshot) {
     <span>DeepSeek</span> (pay-per-use) — no rate limits, billed per token
   </div>`);
 
+  $("limits").innerHTML = rows.join("");
+  // The original aggregate includes the active-session row first. Limits own
+  // this panel now, so remove that row and render the session separately.
+  $("limits").firstElementChild?.remove();
+  $("limitsSummary").textContent = limitUpdatedAt
+    ? `updated ${fmtCompactTime(limitUpdatedAt)}`
+    : "No sample";
+}
+
+function renderActive(snapshot) {
+  const active = snapshot.active_session;
+  if (!active) {
+    $("active").innerHTML = emptyState("No active session data");
+    return;
+  }
+
+  const burn = active.burn_rate || snapshot.burn_rate || {};
+  const rows = [usageRow(
+    active.displayName || active.sessionFile || "Unknown",
+    `${active.projectName || "unknown"} / ${envLabel(active)} / last ${fmtCompactTime(active.lastActivity)}`,
+    active.costUSD != null ? `${fmtShort(active.totalTokens)} / ${fmtMoney(active.costUSD)}` : fmtShort(active.totalTokens),
+    { badge: sessionBadge(active) },
+  )];
+  if (burn.tokens_per_minute_15m != null || burn.tokens_per_minute_60m != null) {
+    rows.push(usageRow(
+      "Burn Rate",
+      "Latest session token pace",
+      `${fmtShort(burn.tokens_per_minute_15m || 0)}/m 15m / ${fmtShort(burn.tokens_per_minute_60m || 0)}/m 60m`,
+    ));
+  }
   $("active").innerHTML = rows.join("");
 }
 
@@ -599,7 +645,7 @@ async function refreshLimitsOnly() {
       latestSnapshot.limits = data.limits;
       latestSnapshot.limit_updated_at = data.limit_updated_at;
     }
-    renderActive(latestSnapshot || { limits: data.limits, limit_updated_at: data.limit_updated_at });
+    renderLimits(latestSnapshot || { limits: data.limits, limit_updated_at: data.limit_updated_at });
     const srcLabel = data.source === "synced_device" ? " (from synced device)" : "";
     if (data.stale) {
       toast(`Limits data is ${data.limit_age_hours}h old${srcLabel} — use Codex once to refresh`, "error");
@@ -613,6 +659,8 @@ async function refreshLimitsOnly() {
     btn.textContent = "↻ Limits";
   }
 }
+
+$("limitsSummary").parentElement.prepend($("refreshLimits"));
 
 $("refreshLimits").addEventListener("click", () => {
   refreshLimitsOnly().catch(() => {});
@@ -639,7 +687,7 @@ function renderProjects(snapshot) {
 
 /* ── Render: Model Breakdown ─────────────── */
 
-function drawModelChart(snapshot) {
+function drawModelChart(snapshot, animate = false) {
   const canvas = $("modelsChart");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
@@ -647,6 +695,11 @@ function drawModelChart(snapshot) {
   const dpr = window.devicePixelRatio || 1;
 
   const rect = canvas.getBoundingClientRect();
+  if (animate) {
+    canvas.classList.remove("model-chart-enter");
+    void canvas.offsetWidth;
+    canvas.classList.add("model-chart-enter");
+  }
   canvas.width = rect.width * dpr;
   canvas.height = rect.height * dpr;
   ctx.scale(dpr, dpr);
@@ -714,7 +767,10 @@ function drawModelChart(snapshot) {
   const tokenMax = Math.max(...entries.map(([, u]) =>
     (u.cacheReadTokens || 0) + (u.inputTokens || 0) + (u.outputTokens || 0)
   ), 1);
-  const requestMax = Math.max(...entries.map(([, u]) => u.eventCount || 0), 1);
+  const knownRequestCounts = entries
+    .map(([, usage]) => usage.eventCount)
+    .filter((count) => typeof count === "number" && Number.isFinite(count));
+  const requestMax = Math.max(...knownRequestCounts, 1);
 
   // Single bar per model, stacked
   const barW = Math.max(14, Math.min(50, (chartW / count) * 0.55));
@@ -737,9 +793,13 @@ function drawModelChart(snapshot) {
       inputTokens: usage.inputTokens || 0,
       outputTokens: usage.outputTokens || 0,
       totalTokens: (usage.cacheReadTokens || 0) + (usage.inputTokens || 0) + (usage.outputTokens || 0),
-      requests: usage.eventCount || 0,
+      requests: typeof usage.eventCount === "number" && Number.isFinite(usage.eventCount)
+        ? usage.eventCount
+        : null,
+      requestsIncomplete: Boolean(usage.eventCountIncomplete),
       costUSD: usage.costUSD,
       costFallback: usage.costPricingFallback,
+      costPricingModel: usage.costPricingModel,
     };
   });
 
@@ -767,11 +827,13 @@ function drawModelChart(snapshot) {
       ctx.textBaseline = "middle";
       ctx.fillText(fmtShort(tokenVal), pad.left - 8, Math.round(y));
 
-      // Right Y-axis: requests
-      const reqVal = requestMax - (requestMax * i) / gridLines;
-      ctx.fillStyle = REQUEST_COLOR;
-      ctx.textAlign = "left";
-      ctx.fillText(fmtShort(reqVal), W - pad.right + 8, Math.round(y));
+      if (knownRequestCounts.length) {
+        // Right Y-axis: requests
+        const reqVal = requestMax - (requestMax * i) / gridLines;
+        ctx.fillStyle = REQUEST_COLOR;
+        ctx.textAlign = "left";
+        ctx.fillText(fmtShort(reqVal), W - pad.right + 8, Math.round(y));
+      }
     }
 
     // Stacked bars (drawn first, below the request line)
@@ -806,37 +868,50 @@ function drawModelChart(snapshot) {
     });
 
     // Request count line (overlay, drawn AFTER bars)
-    const reqPoints = bars.map((bar) => ({
-      x: bar.groupX + bar.groupW / 2,
-      y: pad.top + chartH - Math.max(2, (chartH * (bar.requests || 0)) / requestMax),
-    }));
-    if (reqPoints.length > 1) {
-      ctx.beginPath();
-      ctx.moveTo(reqPoints[0].x, pad.top + chartH);
-      for (const pt of reqPoints) ctx.lineTo(pt.x, pt.y);
-      ctx.lineTo(reqPoints[reqPoints.length - 1].x, pad.top + chartH);
-      ctx.closePath();
-      ctx.fillStyle = REQUEST_COLOR_GLOW;
-      ctx.fill();
-    }
+    const reqRuns = [];
+    let run = [];
+    bars.forEach((bar, index) => {
+      if (bar.requests === null) {
+        if (run.length) reqRuns.push(run);
+        run = [];
+        return;
+      }
+      run.push({
+        index,
+        x: bar.groupX + bar.groupW / 2,
+        y: pad.top + chartH - Math.max(2, (chartH * bar.requests) / requestMax),
+      });
+    });
+    if (run.length) reqRuns.push(run);
+
     ctx.strokeStyle = REQUEST_COLOR;
     ctx.lineWidth = 2;
     ctx.lineJoin = "round";
-    ctx.beginPath();
-    for (let i = 0; i < reqPoints.length; i++) {
-      const pt = reqPoints[i];
-      if (i === 0) ctx.moveTo(pt.x, pt.y);
-      else {
-        const prev = reqPoints[i - 1];
-        ctx.quadraticCurveTo(prev.x, prev.y, (prev.x + pt.x) / 2, (prev.y + pt.y) / 2);
-        ctx.lineTo(pt.x, pt.y);
+    for (const points of reqRuns) {
+      if (points.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, pad.top + chartH);
+        for (const point of points) ctx.lineTo(point.x, point.y);
+        ctx.lineTo(points[points.length - 1].x, pad.top + chartH);
+        ctx.closePath();
+        ctx.fillStyle = REQUEST_COLOR_GLOW;
+        ctx.fill();
       }
-    }
-    ctx.stroke();
-    reqPoints.forEach((pt, i) => {
-      const isHL = highlightIdx === i;
       ctx.beginPath();
-      ctx.arc(pt.x, pt.y, isHL ? 4 : 2.5, 0, Math.PI * 2);
+      points.forEach((point, index) => {
+        if (index === 0) ctx.moveTo(point.x, point.y);
+        else {
+          const previous = points[index - 1];
+          ctx.quadraticCurveTo(previous.x, previous.y, (previous.x + point.x) / 2, (previous.y + point.y) / 2);
+          ctx.lineTo(point.x, point.y);
+        }
+      });
+      ctx.stroke();
+    }
+    reqRuns.flat().forEach((point) => {
+      const isHL = highlightIdx === point.index;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, isHL ? 4 : 2.5, 0, Math.PI * 2);
       ctx.fillStyle = isHL ? REQUEST_COLOR_HL : "#0b1120";
       ctx.fill();
       ctx.strokeStyle = isHL ? REQUEST_COLOR_HL : REQUEST_COLOR;
@@ -921,13 +996,16 @@ function drawModelChart(snapshot) {
 
     const modelLabel = bar.model === "others" ? "Others" : bar.model;
     tooltip.hidden = false;
+    const requestText = bar.requests === null
+      ? "not provided"
+      : `${fmtNumber(bar.requests)}${bar.requestsIncomplete ? "+ (older snapshot missing)" : ""}`;
     tooltip.innerHTML =
       `<div class="chart-tooltip-date">${esc(modelLabel)}</div>` +
       `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#16a34a"></span> Cache: ${fmtNumber(bar.cacheTokens)} (${cachePct}%)</div>` +
       `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#4ade80"></span> Input: ${fmtNumber(bar.inputTokens)}</div>` +
       `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:#3b82f6"></span> Output: ${fmtNumber(bar.outputTokens)}</div>` +
-      `<div class="chart-tooltip-row"><span style="color:#94a3b8">Cost: ${fmtMoney(bar.costUSD)}${bar.costFallback ? " (fallback)" : ""}</span></div>` +
-      `<div class="chart-tooltip-row"><span style="color:#64748b">Requests: ${fmtNumber(bar.requests)}</span></div>`;
+      `<div class="chart-tooltip-row"><span style="color:#94a3b8">Cost: ${fmtMoney(bar.costUSD)}${bar.costFallback ? ` (priced as ${esc(bar.costPricingModel || "fallback")})` : ""}</span></div>` +
+      `<div class="chart-tooltip-row"><span style="color:#64748b">Requests: ${requestText}</span></div>`;
     tooltip.style.left = tx + "px";
     tooltip.style.top = ty + "px";
   };
@@ -938,13 +1016,29 @@ function drawModelChart(snapshot) {
   };
 }
 
-function renderModels(snapshot) {
+function modelViews(snapshot) {
+  return [
+    { id: "today", label: "today", models: snapshot?.today?.models || {} },
+    { id: "total", label: "total", models: snapshot?.models || {} },
+  ];
+}
+
+function selectedModelSnapshot(snapshot) {
+  const views = modelViews(snapshot);
+  if (modelViewIndex >= views.length) modelViewIndex = 0;
+  const view = views[modelViewIndex] || views[0];
+  return { ...snapshot, models: view.models, modelViewLabel: view.label };
+}
+
+function renderModels(snapshot, animate = false) {
+  const selected = selectedModelSnapshot(snapshot);
+  $("modelViewLabel").textContent = selected.modelViewLabel;
   // Canvas chart (JS active — hide fallback list)
-  drawModelChart(snapshot);
+  drawModelChart(selected, animate);
   $("models").style.display = "none";
 
   // Fallback list for no-js (hidden when canvas is active)
-  const entries = Object.entries(snapshot.models || {})
+  const entries = Object.entries(selected.models || {})
     .sort((a, b) => b[1].totalTokens - a[1].totalTokens);
   if (!entries.length) {
     $("models").innerHTML = emptyState("No model data");
@@ -981,6 +1075,36 @@ function renderSkills(snapshot) {
       s.name,
       detail,
       hasTokens ? fmtShort(s.totalTokens) : "—",
+    );
+  }).join("");
+}
+
+function renderEnvironments(snapshot) {
+  const views = (snapshot.trend_views || [])
+    .filter((view) => view.id !== "total" && (view.today || view.totals))
+    .sort((a, b) => (b.today?.totalTokens || 0) - (a.today?.totalTokens || 0));
+  const environments = views.length ? views : [{
+    id: "local",
+    display_name: "This environment",
+    device_name: null,
+    today: snapshot.today || null,
+    totals: snapshot.totals || null,
+  }];
+  const tokenMax = Math.max(...environments.map((view) => view.today?.totalTokens || 0), 1);
+  $("environmentsSummary").textContent = `${environments.length} environment${environments.length === 1 ? "" : "s"}`;
+  $("environments").innerHTML = environments.map((view) => {
+    const today = view.today || {};
+    const lastActivity = today.lastActivity || view.totals?.lastActivity;
+    const active = lastActivity && Date.now() - Date.parse(lastActivity) < 60 * 60 * 1000;
+    const deviceName = view.device_name ? `${view.device_name} · ` : "";
+    const activity = lastActivity
+      ? `${deviceName}${today.eventCount || 0} requests · ${fmtCompactTime(lastActivity)}`
+      : `${deviceName}No activity`;
+    return usageRow(
+      view.display_name || view.label || view.id || "Unknown environment",
+      activity,
+      fmtShort(today.totalTokens || 0),
+      { ratio: (today.totalTokens || 0) / tokenMax, badge: active ? "active" : "idle" },
     );
   }).join("");
 }
@@ -1215,6 +1339,7 @@ function drawHeatmap(snapshot) {
 
 let latestSnapshot = null;
 let trendViewIndex = 0;
+let modelViewIndex = 0;
 let sourcePromptShown = false;
 
 function trendViews(snapshot) {
@@ -1273,10 +1398,12 @@ async function refresh() {
   renderMetrics(snapshot);
   drawHeatmap(snapshot);
   renderTrend(snapshot);
+  renderLimits(snapshot);
   renderActive(snapshot);
   renderProjects(snapshot);
   renderModels(snapshot);
   renderSkills(snapshot);
+  renderEnvironments(snapshot);
   renderSessions(snapshot);
   maybePromptSourceImport(snapshot);
 }
@@ -1439,6 +1566,20 @@ $("trendNext").addEventListener("click", () => {
   renderTrend(latestSnapshot);
 });
 
+$("modelPrev").addEventListener("click", () => {
+  if (!latestSnapshot) return;
+  const views = modelViews(latestSnapshot);
+  modelViewIndex = (modelViewIndex - 1 + views.length) % views.length;
+  renderModels(latestSnapshot, true);
+});
+
+$("modelNext").addEventListener("click", () => {
+  if (!latestSnapshot) return;
+  const views = modelViews(latestSnapshot);
+  modelViewIndex = (modelViewIndex + 1) % views.length;
+  renderModels(latestSnapshot, true);
+});
+
 /* Heatmap month navigation */
 $("hmPrev").addEventListener("click", () => {
   if (hmMonth === 0) { hmMonth = 11; hmYear--; }
@@ -1469,7 +1610,7 @@ window.addEventListener("resize", () => {
         latestSnapshot = snap;
         drawHeatmap(snap);
         renderTrend(snap);
-        drawModelChart(snap);
+        renderModels(snap);
       })
       .catch(() => {
         // Fallback: re-draw with cached snapshot if fetch fails

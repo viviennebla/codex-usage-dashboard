@@ -7,6 +7,7 @@
     "codex-usage": "src/cli.js"
   },
   "scripts": {
+    "test": "node --test",
     "start": "node src/cli.js web",
     "snapshot": "node src/cli.js snapshot",
     "cli": "node src/cli.js cli",

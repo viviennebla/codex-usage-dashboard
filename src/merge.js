@@ -1,3 +1,5 @@
+import { priceModelUsage, pricingTableUpdatedAt } from "./pricing.js";
+
 function number(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
 }
@@ -24,6 +26,66 @@ function addCost(target, value) {
   target.costUSD = (target.costUSD || 0) + Number(value);
 }
 
+function repriceAggregate(row, config) {
+  if (!row || !row.models || typeof row.models !== "object") {
+    return row ? { ...row, costUSD: null } : row;
+  }
+
+  const models = {};
+  let costUSD = 0;
+  let priced = false;
+  for (const [model, usage] of Object.entries(row.models)) {
+    // Aggregated snapshots do not retain an agent per model. Only the explicit
+    // Codex product labels may use the Codex fallback; an "unknown" model is
+    // left unpriced instead of possibly billing Claude usage as GPT-5.5.
+    const normalizedModel = String(model).toLowerCase();
+    const source = normalizedModel.startsWith("codex-") || normalizedModel.startsWith("gpt-5.6")
+      ? "codex"
+      : "claude";
+    const price = priceModelUsage(model, usage, config, source);
+    models[model] = {
+      ...usage,
+      costUSD: price?.costUSD ?? null,
+      costPricingModel: price?.costPricingModel,
+      costPricingFallback: Boolean(price?.costPricingFallback),
+    };
+    if (price) {
+      costUSD += price.costUSD;
+      priced = true;
+    }
+  }
+
+  return { ...row, models, costUSD: priced ? costUSD : null };
+}
+
+function repriceSnapshot(snapshot, config) {
+  if (!snapshot || typeof snapshot !== "object") return snapshot;
+  const repriceRows = (rows) => Array.isArray(rows)
+    ? rows.map((row) => repriceAggregate(row, config))
+    : rows;
+  const trendViews = Array.isArray(snapshot.trend_views)
+    ? snapshot.trend_views.map((view) => ({
+      ...view,
+      today: repriceAggregate(view.today, config),
+      totals: repriceAggregate(view.totals, config),
+      recent_days: repriceRows(view.recent_days),
+    }))
+    : snapshot.trend_views;
+
+  return {
+    ...snapshot,
+    today: repriceAggregate(snapshot.today, config),
+    totals: repriceAggregate(snapshot.totals, config),
+    models: repriceAggregate({ models: snapshot.models }, config).models,
+    recent_days: repriceRows(snapshot.recent_days),
+    activity_days: repriceRows(snapshot.activity_days),
+    top_sessions: repriceRows(snapshot.top_sessions),
+    top_projects: repriceRows(snapshot.top_projects),
+    active_session: repriceAggregate(snapshot.active_session, config),
+    trend_views: trendViews,
+  };
+}
+
 function sumModels(target, source) {
   if (!source || typeof source !== "object") return;
   for (const [model, usage] of Object.entries(source)) {
@@ -34,9 +96,9 @@ function sumModels(target, source) {
       outputTokens: 0,
       reasoningOutputTokens: 0,
       totalTokens: 0,
-      eventCount: 0,
       costUSD: null,
       isFallback: false,
+      eventCountIncomplete: false,
     };
     target[model].inputTokens += number(usage.inputTokens);
     target[model].cacheCreationTokens += number(usage.cacheCreationTokens);
@@ -45,7 +107,11 @@ function sumModels(target, source) {
     target[model].reasoningOutputTokens += number(usage.reasoningOutputTokens);
     target[model].totalTokens += number(usage.totalTokens);
     addCost(target[model], usage.costUSD);
-    target[model].eventCount += number(usage.eventCount);
+    if (typeof usage.eventCount === "number" && Number.isFinite(usage.eventCount)) {
+      target[model].eventCount = (target[model].eventCount || 0) + usage.eventCount;
+    } else {
+      target[model].eventCountIncomplete = true;
+    }
     target[model].isFallback = target[model].isFallback || Boolean(usage.isFallback);
     target[model].costPricingFallback = target[model].costPricingFallback || Boolean(usage.costPricingFallback);
     if (usage.costPricingModel) target[model].costPricingModel = usage.costPricingModel;
@@ -235,7 +301,7 @@ function buildOverallStatus(deviceEntries) {
  *        Map of deviceId → { deviceName, snapshot }
  * @returns {object} Merged snapshot with per-device drill-down
  */
-export function mergeSnapshots(deviceEntries) {
+export function mergeSnapshots(deviceEntries, config = {}) {
   if (deviceEntries.size === 0) {
     return {
       schema_version: "0.3",
@@ -253,10 +319,16 @@ export function mergeSnapshots(deviceEntries) {
     };
   }
 
+  const repricedEntries = new Map(
+    [...deviceEntries].map(([deviceId, entry]) => [
+      deviceId,
+      { ...entry, snapshot: repriceSnapshot(entry.snapshot, config) },
+    ]),
+  );
   const sourceDevices = {};
   const perDevice = {};
 
-  for (const [deviceId, { deviceName, snapshot }] of deviceEntries) {
+  for (const [deviceId, { deviceName, snapshot }] of repricedEntries) {
     sourceDevices[deviceId] = buildDeviceSummary(deviceId, deviceName, snapshot);
     perDevice[deviceId] = {
       active_session: snapshot?.active_session || null,
@@ -272,24 +344,24 @@ export function mergeSnapshots(deviceEntries) {
     };
   }
 
-  const mergedToday = mergeToday(deviceEntries);
-  const mergedTotals = mergeTotals(deviceEntries);
-  const mergedRecentDays = mergeDaily(deviceEntries, "recent_days");
-  const mergedActivityDays = mergeActivityDays(deviceEntries);
+  const mergedToday = mergeToday(repricedEntries);
+  const mergedTotals = mergeTotals(repricedEntries);
+  const mergedRecentDays = mergeDaily(repricedEntries, "recent_days");
+  const mergedActivityDays = mergeActivityDays(repricedEntries);
 
   const merged = {
     schema_version: "0.3",
     generated_at: new Date().toISOString(),
-    device_count: deviceEntries.size,
+    device_count: repricedEntries.size,
     source_devices: sourceDevices,
     today: mergedToday,
     totals: mergedTotals,
-    models: mergeModels(deviceEntries),
+    models: mergeModels(repricedEntries),
     recent_days: mergedRecentDays,
     activity_days: mergedActivityDays.length > 0 ? mergedActivityDays : mergedRecentDays,
-    trend_views: buildTrendViews(deviceEntries, mergedRecentDays, mergedToday, mergedTotals),
-    top_sessions: mergeTopItems(deviceEntries, "top_sessions"),
-    top_projects: mergeTopItems(deviceEntries, "top_projects"),
+    trend_views: buildTrendViews(repricedEntries, mergedRecentDays, mergedToday, mergedTotals),
+    top_sessions: mergeTopItems(repricedEntries, "top_sessions"),
+    top_projects: mergeTopItems(repricedEntries, "top_projects"),
     per_device: perDevice,
     forecast: null, // multi-device forecast is device-specific
     burn_rate: null, // multi-device: see per_device
@@ -298,13 +370,14 @@ export function mergeSnapshots(deviceEntries) {
     filters: { since: null, until: null, timezone: null },
     confidence: "merged_from_devices",
     cost: {
-      available: [...deviceEntries].some(([, { snapshot }]) => Boolean(snapshot?.cost?.available)),
-      confidence: "merged_estimate",
+      available: mergedTotals.costUSD !== null,
+      confidence: "current_price_table",
+      pricing: { updated_at: pricingTableUpdatedAt(config) },
     },
     diagnostics: {
-      device_count: deviceEntries.size,
+      device_count: repricedEntries.size,
     },
-    status: buildOverallStatus(deviceEntries),
+    status: buildOverallStatus(repricedEntries),
   };
 
   return merged;
