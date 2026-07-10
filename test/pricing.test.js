@@ -44,7 +44,7 @@ test("keeps DeepSeek models on their own direct price table", () => {
   assert.equal(result.events[0].costPricingFallback, false);
 });
 
-test("does not estimate a named model without an official price entry", () => {
+test("prices GPT-5.6 Codex variants as GPT-5.5 until their own table is configured", () => {
   const result = priceEvents([{
     source: "sessions",
     model: "gpt-5.6-sol",
@@ -53,8 +53,9 @@ test("does not estimate a named model without an official price entry", () => {
     outputTokens: 0,
   }]);
 
-  assert.equal(result.events[0].costUSD, null);
-  assert.deepEqual(result.meta.unpriced_models, ["gpt-5.6-sol"]);
+  assert.equal(result.events[0].costUSD, 5);
+  assert.equal(result.events[0].costPricingModel, "gpt-5.5");
+  assert.equal(result.events[0].costPricingFallback, true);
 });
 
 test("keeps a newer local snapshot when a pull returns an older one", () => {

@@ -38,7 +38,10 @@ function repriceAggregate(row, config) {
     // Aggregated snapshots do not retain an agent per model. Only the explicit
     // Codex product labels may use the Codex fallback; an "unknown" model is
     // left unpriced instead of possibly billing Claude usage as GPT-5.5.
-    const source = String(model).toLowerCase().startsWith("codex-") ? "codex" : "claude";
+    const normalizedModel = String(model).toLowerCase();
+    const source = normalizedModel.startsWith("codex-") || normalizedModel.startsWith("gpt-5.6")
+      ? "codex"
+      : "claude";
     const price = priceModelUsage(model, usage, config, source);
     models[model] = {
       ...usage,
@@ -93,9 +96,9 @@ function sumModels(target, source) {
       outputTokens: 0,
       reasoningOutputTokens: 0,
       totalTokens: 0,
-      eventCount: 0,
       costUSD: null,
       isFallback: false,
+      eventCountIncomplete: false,
     };
     target[model].inputTokens += number(usage.inputTokens);
     target[model].cacheCreationTokens += number(usage.cacheCreationTokens);
@@ -104,7 +107,11 @@ function sumModels(target, source) {
     target[model].reasoningOutputTokens += number(usage.reasoningOutputTokens);
     target[model].totalTokens += number(usage.totalTokens);
     addCost(target[model], usage.costUSD);
-    target[model].eventCount += number(usage.eventCount);
+    if (typeof usage.eventCount === "number" && Number.isFinite(usage.eventCount)) {
+      target[model].eventCount = (target[model].eventCount || 0) + usage.eventCount;
+    } else {
+      target[model].eventCountIncomplete = true;
+    }
     target[model].isFallback = target[model].isFallback || Boolean(usage.isFallback);
     target[model].costPricingFallback = target[model].costPricingFallback || Boolean(usage.costPricingFallback);
     if (usage.costPricingModel) target[model].costPricingModel = usage.costPricingModel;

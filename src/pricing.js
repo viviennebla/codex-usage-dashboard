@@ -65,9 +65,11 @@ export function pricingTableUpdatedAt(config = {}) {
 function defaultFallbackModel(event) {
   if (sourceAgent(event) !== "codex") return null;
   const model = normalizeModelName(event.model);
-  // These product-only labels do not identify a separately priced API model.
-  // Keep named, unsupported model versions unpriced rather than guessing.
-  return model === "unknown" || model.startsWith("codex-") ? "gpt-5.5" : null;
+  // These Codex product labels and GPT-5.6 variants do not have their own
+  // configured table yet, so estimate them with the GPT-5.5 Codex rate.
+  return model === "unknown" || model.startsWith("codex-") || model.startsWith("gpt-5.6")
+    ? "gpt-5.5"
+    : null;
 }
 
 function priceForModel(model, config = {}) {

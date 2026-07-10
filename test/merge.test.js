@@ -66,3 +66,24 @@ test("does not guess a price for an unknown model in a remote aggregate", () => 
   assert.equal(merged.today.costUSD, null);
   assert.equal(merged.models.unknown.costUSD, null);
 });
+
+test("marks model request counts incomplete when an older snapshot omits them", () => {
+  const usage = (eventCount) => ({
+    totalTokens: 100,
+    models: {
+      "gpt-5.5": {
+        totalTokens: 100,
+        ...(eventCount === undefined ? {} : { eventCount }),
+      },
+    },
+  });
+  const legacy = usage();
+  const current = usage(4);
+  const merged = mergeSnapshots(new Map([
+    ["legacy", { deviceName: "legacy", snapshot: { today: legacy, totals: legacy, models: legacy.models } }],
+    ["current", { deviceName: "current", snapshot: { today: current, totals: current, models: current.models } }],
+  ]));
+
+  assert.equal(merged.today.models["gpt-5.5"].eventCount, 4);
+  assert.equal(merged.today.models["gpt-5.5"].eventCountIncomplete, true);
+});
