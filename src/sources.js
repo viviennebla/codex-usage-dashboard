@@ -250,14 +250,14 @@ export async function inspectSource(path, type = "codex", labels = new Map()) {
     return { ...result, status: "missing", message: `Expected data directory not found: ${dataDir}` };
   }
 
-  // For skills, count subdirectories; for agents, count JSONL files
+  // Skills are portable Markdown files and may be nested under arbitrary Agent layouts.
   if (normalizedType === "skills") {
     try {
-      const ents = await readdir(dataDir, { withFileTypes: true });
-      const dirCount = ents.filter((e) => e.isDirectory()).length;
-      result.files_found = dirCount;
-      result.status = dirCount > 0 ? "ok" : "empty";
-      result.message = dirCount > 0 ? `Found ${dirCount} skill(s)` : "No skill directories found";
+      const { scanSkillDir } = await import("./skills-sync.js");
+      const skills = await scanSkillDir(dataDir);
+      result.files_found = skills.length;
+      result.status = skills.length > 0 ? "ok" : "empty";
+      result.message = skills.length > 0 ? `Found ${skills.length} skill(s)` : "No skill Markdown files found";
     } catch (error) {
       return { ...result, status: "unreadable", message: error?.message || "Cannot read skills directory" };
     }

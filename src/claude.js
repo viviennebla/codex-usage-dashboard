@@ -65,6 +65,19 @@ function expandHome(path) {
   return path;
 }
 
+function cacheContext(fileInfo, options) {
+  return JSON.stringify({
+    projectPath: fileInfo.projectPath,
+    projectDir: fileInfo.projectDir,
+    environment: fileInfo.environment,
+    environmentId: fileInfo.environmentId,
+    environmentLabel: fileInfo.environmentLabel,
+    detectedName: fileInfo.detectedName,
+    since: options.since || null,
+    until: options.until || null,
+  });
+}
+
 /**
  * Discover Claude Code project directories.
  * Sources: CLAUDE_CONFIG_DIR env var, ~/.config/claude, ~/.claude
@@ -459,9 +472,16 @@ export async function loadClaudeReports(options = {}) {
   }
 
   const files = await collectClaudeFiles(roots, options.sourceLabels || new Map());
+  const parseCache = options.fileCache || null;
   const nestedEvents = await Promise.all(
-    files.map((file) => parseClaudeFile(file, options)),
+    files.map((file) => {
+      const parse = () => parseClaudeFile(file, options);
+      return parseCache
+        ? parseCache.get("claude", file.file, cacheContext(file, options), parse)
+        : parse();
+    }),
   );
+  parseCache?.prune("claude", files.map((file) => file.file));
   const allRaw = nestedEvents.flat().sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
 
   // Separate skill events from usage events

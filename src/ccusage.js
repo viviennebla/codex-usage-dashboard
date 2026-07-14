@@ -120,6 +120,21 @@ function unique(values) {
   return out;
 }
 
+function cacheContext(fileInfo, options) {
+  return JSON.stringify({
+    source: fileInfo.source,
+    root: fileInfo.root,
+    environment: fileInfo.environment,
+    environmentId: fileInfo.environmentId,
+    environmentLabel: fileInfo.environmentLabel,
+    detectedName: fileInfo.detectedName,
+    distro: fileInfo.distro,
+    user: fileInfo.user,
+    since: options.since || null,
+    until: options.until || null,
+  });
+}
+
 async function exists(path) {
   try {
     await access(path);
@@ -360,22 +375,20 @@ function normalizeRateLimits(raw) {
   };
 }
 
+const BUILTIN_MCP_SERVERS = new Set([
+  "computer-use",
+  "node_repl",
+]);
+
 function toolCallFromPayload(payload = {}) {
   if (payload.type === "mcp_tool_call_end" && payload.invocation?.tool) {
     const server = payload.invocation.server || "unknown";
+    if (BUILTIN_MCP_SERVERS.has(server)) return null;
     return {
       name: server !== "unknown" ? `${server}/${payload.invocation.tool}` : payload.invocation.tool,
       callId: payload.call_id || payload.callId || null,
     };
   }
-
-  if ((payload.type === "function_call" || payload.type === "custom_tool_call") && payload.name) {
-    return {
-      name: payload.name,
-      callId: payload.call_id || payload.callId || null,
-    };
-  }
-
   return null;
 }
 
@@ -454,8 +467,8 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
       meta.inferredTitle = titleFromUserMessage(payload.message);
     }
 
-    // Codex Desktop writes native tools as response_item/function_call and
-    // response_item/custom_tool_call; older MCP calls use mcp_tool_call_end.
+    // Only user-configured MCP calls belong in this panel. Native Codex tools
+    // such as exec_command and apply_patch are deliberately excluded.
     addToolCall(toolCounts, seenToolCallIds, payload);
 
     if (payload.type !== "token_count") continue;
@@ -593,9 +606,16 @@ export async function loadCodexReports(options = {}) {
   const files = await collectSessionFiles(homes, options.sourceLabels || new Map());
   const sessionIndex = await loadSessionIndex(homes);
   const threadStateIndex = await loadThreadStateIndex(homes);
+  const parseCache = options.fileCache || null;
   const nestedResults = await Promise.all(
-    files.map((file) => parseSessionFile(file, sessionIndex, threadStateIndex, options)),
+    files.map((file) => {
+      const parse = () => parseSessionFile(file, sessionIndex, threadStateIndex, options);
+      return parseCache
+        ? parseCache.get("codex", file.file, cacheContext(file, options), parse)
+        : parse();
+    }),
   );
+  parseCache?.prune("codex", files.map((file) => file.file));
   const events = nestedResults.flatMap((r) => r.events).sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
   const rawTools = nestedResults.flatMap((r) => r.tools);
   const toolMap = new Map();

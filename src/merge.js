@@ -187,12 +187,28 @@ function mergeTotals(deviceEntries) {
   return totals;
 }
 
+function localDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function mergeToday(deviceEntries) {
   const today = blankAggregate();
+  const date = localDateKey();
   for (const [, { snapshot }] of deviceEntries) {
-    if (snapshot?.today) addToAggregate(today, snapshot.today);
+    const row = snapshot?.today;
+    // A device's persisted "today" can be from a previous calendar day.
+    // Older snapshots without a date remain compatible, but dated snapshots
+    // must match the dashboard's current local date before they are merged.
+    if (row && (!row.date || row.date === date)) addToAggregate(today, row);
   }
-  return today;
+  return { ...today, date };
 }
 
 function mergeModels(deviceEntries) {
@@ -221,6 +237,11 @@ function mergeTopItems(deviceEntries, field) {
 }
 
 function buildTrendViews(deviceEntries, mergedRecentDays, mergedToday, mergedTotals) {
+  const date = localDateKey();
+  const currentToday = (row) => {
+    if (!row) return null;
+    return !row.date || row.date === date ? row : null;
+  };
   const views = [{
     id: "total",
     label: "total",
@@ -244,6 +265,7 @@ function buildTrendViews(deviceEntries, mergedRecentDays, mergedToday, mergedTot
           device_name: labelPrefix,
           label,
           display_name: label,
+          today: currentToday(view.today),
         });
       }
       continue;
@@ -256,7 +278,7 @@ function buildTrendViews(deviceEntries, mergedRecentDays, mergedToday, mergedTot
       label: labelPrefix,
       display_name: labelPrefix,
       recent_days: snapshot?.recent_days || [],
-      today: snapshot?.today || null,
+      today: currentToday(snapshot?.today),
       totals: snapshot?.totals || null,
     });
   }

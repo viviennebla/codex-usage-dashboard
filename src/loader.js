@@ -295,7 +295,7 @@ export async function loadAllReports(options = {}) {
     ...(claude.tool?.dataRoots || []),
   ];
 
-  // Merge Codex tool calls and Claude skill invocations without conflating them.
+  // Merge user-configured Codex MCP calls and Claude skill invocations.
   const skills = mergeSkillStats([
     codex.skills,
     claude.skills,

@@ -4,4 +4,5 @@ work/
 outputs/
 .env
 .DS_Store
+.claude/
 *.log

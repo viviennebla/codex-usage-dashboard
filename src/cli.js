@@ -10,13 +10,16 @@ import { buildSnapshot } from "./snapshot.js";
 import {
   DEFAULT_STATE_PATH,
   writeStateFile,
+  readStateFile,
   readDeviceStates,
   writeDeviceState,
   removeDeviceState,
 } from "./state.js";
+import { FileParseCache } from "./file-cache.js";
 import { addDirectory, listDirectories, removeDirectory, readConfig } from "./config.js";
 import { pullFromServer, recordSyncStatus } from "./sync.js";
 import { discoverSourceDiagnostics, inspectSource, sourceLabelMap } from "./sources.js";
+import { CodexLimitsClient } from "./codex-limits.js";
 
 process.stdout.on("error", () => {});
 process.stderr.on("error", () => {});
@@ -144,6 +147,165 @@ function sendError(res, status, message) {
 function startWeb(options) {
   const token = process.env.DASHBOARD_TOKEN || null;
   const stateDir = options.stateDir || "state";
+  const maxSnapshotAgeMs = 5 * 60_000;
+  const fileCache = new FileParseCache();
+  const codexLimits = new CodexLimitsClient();
+  const snapshotOptions = { ...options, fileCache };
+  let localSnapshot = null;
+  let mergedSnapshot = null;
+  let refreshInFlight = null;
+  let lastSnapshotRefreshAt = 0;
+
+  function localDayKey(date = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  }
+
+  function needsNewDaySnapshot(snapshot) {
+    return snapshot?.today?.date !== localDayKey();
+  }
+
+  function invalidateMergedSnapshot() {
+    mergedSnapshot = null;
+  }
+
+  async function buildMergedSnapshot(snapshot) {
+    const remoteDevices = await readDeviceStates(stateDir);
+    const localName = hostname();
+    remoteDevices.delete(localName); // never merge own stale snapshot
+    if (remoteDevices.size === 0) return snapshot;
+
+    const { mergeSnapshots } = await import("./merge.js");
+    const allDevices = new Map(remoteDevices);
+    allDevices.set(localName, { deviceName: localName, snapshot });
+    const cfg = await readConfig();
+    const merged = mergeSnapshots(allDevices, cfg);
+
+    // Carry over device-specific fields from the local snapshot.
+    merged.skills = snapshot.skills || [];
+    let bestLimits = snapshot.limits || null;
+    let bestLimitAt = snapshot.limit_updated_at || null;
+    for (const [, { snapshot: devSnap }] of allDevices) {
+      const devAt = devSnap?.limit_updated_at;
+      if (devAt && (!bestLimitAt || devAt > bestLimitAt)) {
+        bestLimitAt = devAt;
+        if (devSnap?.limits) bestLimits = devSnap.limits;
+      }
+    }
+    merged.limits = bestLimits;
+    merged.limit_updated_at = bestLimitAt;
+    merged.burn_rate = snapshot.burn_rate || null;
+    merged.active_session = snapshot.active_session || null;
+    merged.devices = Object.values(merged.source_devices || {});
+
+    const mergedSS = {};
+    for (const [, { snapshot: devSnap }] of allDevices) {
+      const ss = devSnap?.source_status;
+      if (!ss) continue;
+      for (const [src, info] of Object.entries(ss)) {
+        if (!mergedSS[src]) {
+          mergedSS[src] = { ...info };
+        } else {
+          mergedSS[src].today_events += info.today_events || 0;
+          mergedSS[src].today_tokens += info.today_tokens || 0;
+          mergedSS[src].total_events += info.total_events || 0;
+          if (info.last_activity && (!mergedSS[src].last_activity || info.last_activity > mergedSS[src].last_activity)) {
+            mergedSS[src].last_activity = info.last_activity;
+          }
+        }
+      }
+    }
+    const now = new Date();
+    for (const s of Object.values(mergedSS)) {
+      const hoursSince = s.last_activity
+        ? Math.round((now - new Date(s.last_activity)) / 3600000 * 10) / 10
+        : Infinity;
+      s.hours_since_last = hoursSince === Infinity ? null : hoursSince;
+      s.status = hoursSince <= 1 ? "active"
+        : hoursSince <= 24 ? "recent"
+        : hoursSince <= 48 ? "idle"
+        : hoursSince <= 168 ? "stale"
+        : "expired";
+    }
+    merged.source_status = mergedSS;
+    return merged;
+  }
+
+  async function getCachedSnapshot() {
+    if (!localSnapshot) {
+      localSnapshot = await readStateFile(options.state);
+      lastSnapshotRefreshAt = Date.parse(localSnapshot?.generated_at || "") || 0;
+    }
+    if (!localSnapshot) return refreshDashboardSnapshot();
+    if (
+      needsNewDaySnapshot(localSnapshot) ||
+      Date.now() - lastSnapshotRefreshAt >= maxSnapshotAgeMs
+    ) return refreshDashboardSnapshot();
+    if (mergedSnapshot) return mergedSnapshot;
+    mergedSnapshot = await buildMergedSnapshot(localSnapshot);
+    return mergedSnapshot;
+  }
+
+  async function rebuildSnapshot() {
+    if (!refreshInFlight) {
+      refreshInFlight = (async () => {
+        localSnapshot = await createSnapshot(snapshotOptions);
+        lastSnapshotRefreshAt = Date.now();
+        invalidateMergedSnapshot();
+        return localSnapshot;
+      })().finally(() => {
+        refreshInFlight = null;
+      });
+    }
+    return refreshInFlight;
+  }
+
+  async function refreshDashboardSnapshot() {
+    await rebuildSnapshot();
+    return getCachedSnapshot();
+  }
+
+  function compactRows(rows) {
+    return Array.isArray(rows)
+      ? rows.map(({ models, ...row }) => row)
+      : rows;
+  }
+
+  function compactAggregate(row) {
+    if (!row || typeof row !== "object") return row;
+    const { models, ...aggregate } = row;
+    return aggregate;
+  }
+
+  function dashboardSummary(snapshot) {
+    const { top_projects, top_sessions, skills, per_device, ...summary } = snapshot;
+    return {
+      ...summary,
+      recent_days: compactRows(summary.recent_days),
+      activity_days: compactRows(summary.activity_days),
+      trend_views: Array.isArray(summary.trend_views)
+        ? summary.trend_views.map((view) => ({
+          ...view,
+          today: compactAggregate(view.today),
+          totals: compactAggregate(view.totals),
+          recent_days: compactRows(view.recent_days),
+        }))
+        : summary.trend_views,
+    };
+  }
+
+  function detailSection(snapshot, section) {
+    if (section === "projects") return { top_projects: compactRows(snapshot.top_projects) || [] };
+    if (section === "sessions") return { top_sessions: compactRows(snapshot.top_sessions) || [] };
+    if (section === "skills") return { skills: snapshot.skills || [] };
+    return null;
+  }
 
   const server = createServer(async (req, res) => {
     try {
@@ -167,6 +329,7 @@ function startWeb(options) {
         const deviceId = String(body.device_id).replace(/[^a-zA-Z0-9._-]/g, "_");
         const deviceName = body.device_name || deviceId;
         await writeDeviceState(deviceId, deviceName, body.snapshot, stateDir);
+        invalidateMergedSnapshot();
         console.log(`[push] received from ${deviceId} (${deviceName})`);
         sendJson(res, 200, { ok: true, device_id: deviceId });
         return;
@@ -184,84 +347,34 @@ function startWeb(options) {
           return;
         }
         await removeDeviceState(String(deviceId).replace(/[^a-zA-Z0-9._-]/g, "_"), stateDir);
+        invalidateMergedSnapshot();
         console.log(`[push] removed device ${deviceId}`);
         sendJson(res, 200, { ok: true, removed: deviceId });
         return;
       }
 
-      // ── GET /api/snapshot ── return local snapshot merged with pulled devices
+      // ── GET /api/snapshot ── return the cached local snapshot merged with pulled devices
       if (req.method === "GET" && url.pathname === "/api/snapshot") {
-        const snapshot = await createSnapshot(options);
+        sendJson(res, 200, dashboardSummary(await getCachedSnapshot()));
+        return;
+      }
 
-        // Merge pulled device snapshots into the view (skip self)
-        const { readDeviceStates: readDevs } = await import("./state.js");
-        const remoteDevices = await readDevs(stateDir);
-        const localName = hostname();
-        remoteDevices.delete(localName); // never merge own stale snapshot
-        if (remoteDevices.size > 0) {
-          const { mergeSnapshots } = await import("./merge.js");
-          // Local snapshot is the base; only merge other devices' data
-          const allDevices = new Map(remoteDevices);
-          allDevices.set(localName, { deviceName: localName, snapshot });
-          const cfg = await readConfig();
-          const merged = mergeSnapshots(allDevices, cfg);
+      // ── POST /api/refresh ── explicitly rescan local JSONL logs
+      if (req.method === "POST" && url.pathname === "/api/refresh") {
+        sendJson(res, 200, dashboardSummary(await refreshDashboardSnapshot()));
+        return;
+      }
 
-          // Carry over device-specific fields from local snapshot
-          merged.skills = snapshot.skills || [];
-          // Pick the most recent limits + limit_updated_at across all devices
-          let bestLimits = snapshot.limits || null;
-          let bestLimitAt = snapshot.limit_updated_at || null;
-          for (const [, { snapshot: devSnap }] of allDevices) {
-            const devAt = devSnap?.limit_updated_at;
-            if (devAt && (!bestLimitAt || devAt > bestLimitAt)) {
-              bestLimitAt = devAt;
-              if (devSnap?.limits) bestLimits = devSnap.limits;
-            }
-          }
-          merged.limits = bestLimits;
-          merged.limit_updated_at = bestLimitAt;
-          merged.burn_rate = snapshot.burn_rate || null;
-          merged.active_session = snapshot.active_session || null;
-          // Expose device list for frontend
-          merged.devices = Object.values(merged.source_devices || {});
-
-          // Merge source_status: keep the most recent last_activity per source across all devices
-          const mergedSS = {};
-          for (const [, { snapshot: devSnap }] of allDevices) {
-            const ss = devSnap?.source_status;
-            if (!ss) continue;
-            for (const [src, info] of Object.entries(ss)) {
-              if (!mergedSS[src]) {
-                mergedSS[src] = { ...info };
-              } else {
-                mergedSS[src].today_events += info.today_events || 0;
-                mergedSS[src].today_tokens += info.today_tokens || 0;
-                mergedSS[src].total_events += info.total_events || 0;
-                if (info.last_activity && (!mergedSS[src].last_activity || info.last_activity > mergedSS[src].last_activity)) {
-                  mergedSS[src].last_activity = info.last_activity;
-                }
-              }
-            }
-          }
-          // Recompute status based on merged data
-          const now = new Date();
-          for (const [src, s] of Object.entries(mergedSS)) {
-            const hoursSince = s.last_activity
-              ? Math.round((now - new Date(s.last_activity)) / 3600000 * 10) / 10
-              : Infinity;
-            s.hours_since_last = hoursSince === Infinity ? null : hoursSince;
-            s.status = hoursSince <= 1 ? "active"
-              : hoursSince <= 24 ? "recent"
-              : hoursSince <= 48 ? "idle"
-              : hoursSince <= 168 ? "stale"
-              : "expired";
-          }
-          merged.source_status = mergedSS;
-
-          sendJson(res, 200, merged);
-        } else {
-          sendJson(res, 200, snapshot);
+      // ── GET /api/details ── load lower-page lists from the cached snapshot
+      if (req.method === "GET" && url.pathname === "/api/details") {
+        const snapshot = await getCachedSnapshot();
+        const section = url.searchParams.get("section") || "";
+        const detail = detailSection(snapshot, section);
+        if (!detail) {
+          sendError(res, 400, "Unknown detail section");
+          return;
         }
+        sendJson(res, 200, { generated_at: snapshot.generated_at, section, ...detail });
         return;
       }
 
@@ -292,6 +405,7 @@ function startWeb(options) {
           return;
         }
         const result = await pullFromServer(serverUrl);
+        invalidateMergedSnapshot();
         const { readSyncState } = await import("./sync.js");
         const syncState = await readSyncState();
 
@@ -331,73 +445,26 @@ function startWeb(options) {
         const { join } = await import("node:path");
         const { homedir } = await import("node:os");
 
-        let probed = false;
-
-        // ── Step 1: Probe Codex API for live rate limits ──
+        // ── Step 1: Read the same Codex account limits used by CLI /status ──
         try {
-          const authRaw = await readFile(join(homedir(), ".codex", "auth.json"), "utf8");
-          const auth = JSON.parse(authRaw);
-          const tokens = auth.tokens || {};
-          // Get the first available token
-          // OAuth JWT: tokens.access_token is the Bearer; fallback to OPENAI_API_KEY
-          const apiKey = auth.OPENAI_API_KEY
-            || (typeof tokens.access_token === "string" ? tokens.access_token : null)
-            || Object.values(tokens).find((v) => typeof v === "string" && v.length > 20)
-            || null;
-
-          if (apiKey) {
-            // Read config.toml for base_url
-            let baseUrl = "https://api.openai.com/v1";
-            let model = "gpt-4o-mini";
-            try {
-              const tomlRaw = await readFile(join(homedir(), ".codex", "config.toml"), "utf8");
-              const urlMatch = tomlRaw.match(/base_url\s*=\s*"([^"]+)"/);
-              if (urlMatch) baseUrl = urlMatch[1];
-              const modelMatch = tomlRaw.match(/model\s*=\s*"([^"]+)"/);
-              if (modelMatch) model = modelMatch[1];
-            } catch {}
-
-            // Minimal probe: "hi" → 1 token output
-            const probeResp = await fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                "authorization": `Bearer ${apiKey}`,
-              },
-              body: JSON.stringify({
-                model,
-                messages: [{ role: "user", content: "hi" }],
-                max_tokens: 1,
-                temperature: 0,
-              }),
-            });
-
-            if (probeResp.ok) {
-              // Check response body for rate_limits field
-              const probeData = await probeResp.json();
-              const rl = probeData.rate_limits || probeData.rateLimits;
-              if (rl) {
-                const limits = { ...rl };
-                // Convert epoch → ISO
-                for (const key of ["primary", "secondary"]) {
-                  if (limits[key]?.resets_at && typeof limits[key].resets_at === "number") {
-                    limits[key] = { ...limits[key], resets_at: new Date(limits[key].resets_at * 1000).toISOString() };
-                  }
-                }
-                sendJson(res, 200, {
-                  limits,
-                  limit_updated_at: new Date().toISOString(),
-                  generated_at: new Date().toISOString(),
-                  probe: true,
-                  probe_tokens: probeData.usage?.total_tokens || 0,
-                });
-                probed = true;
-              }
+          const live = await codexLimits.readRateLimits();
+          if (live.limits) {
+            const updatedAt = new Date().toISOString();
+            if (localSnapshot) {
+              localSnapshot.limits = live.limits;
+              localSnapshot.limit_updated_at = updatedAt;
+              invalidateMergedSnapshot();
             }
+            sendJson(res, 200, {
+              ...live,
+              limit_updated_at: updatedAt,
+              generated_at: updatedAt,
+              source: "codex_app_server",
+              stale: false,
+            });
+            return;
           }
         } catch { /* probe failed — fall back to file scan */ }
-
-        if (probed) return;
 
         // ── Step 2: Fallback — scan most recent session files ──
         async function findLatestLimits(dataDir) {
@@ -439,10 +506,7 @@ function startWeb(options) {
         }
 
         const home = homedir();
-        const [codexResult, claudeResult] = await Promise.all([
-          findLatestLimits(join(home, ".codex", "sessions")),
-          findLatestLimits(join(home, ".claude", "projects")),
-        ]);
+        const codexResult = await findLatestLimits(join(home, ".codex", "sessions"));
 
         // Also check synced device snapshots for newer limit data
         const deviceCandidates = [];
@@ -456,7 +520,7 @@ function startWeb(options) {
           }
         }
 
-        const best = [codexResult, claudeResult, ...deviceCandidates]
+        const best = [codexResult, ...deviceCandidates]
           .filter(Boolean)
           .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))[0] || null;
 
@@ -514,7 +578,7 @@ function startWeb(options) {
         if (!serverUrl) { sendError(res, 400, "Missing 'server' in request body"); return; }
 
         // Local snapshot
-        const localSnapshot = await createSnapshot(options);
+        const localSnapshot = await rebuildSnapshot();
         const localTime = localSnapshot.generated_at ? new Date(localSnapshot.generated_at).getTime() : 0;
 
         // Fetch remote device list
@@ -563,7 +627,7 @@ function startWeb(options) {
         const deviceId = body?.device || hostname();
         if (!serverUrl) { sendError(res, 400, "Missing 'server'"); return; }
 
-        const snapshot = await createSnapshot(options);
+        const snapshot = await rebuildSnapshot();
         const remoteUrl = String(serverUrl).replace(/\/+$/, "");
         const headers = { "content-type": "application/json" };
         if (token) headers.authorization = `Bearer ${token}`;
@@ -615,6 +679,7 @@ function startWeb(options) {
           }
           const snapshot = await resp.json();
           await writeDeviceState(deviceId, deviceId, snapshot, stateDir);
+          invalidateMergedSnapshot();
           console.log(`[sync-device] pulled ${deviceId}`);
           sendJson(res, 200, { ok: true, device_id: deviceId });
         } catch (err) {
@@ -705,10 +770,18 @@ function startWeb(options) {
 
       // ── GET /api/skills/local ── scan registered skill directories
       if (req.method === "GET" && url.pathname === "/api/skills/local") {
-        const { scanAllSkillDirs } = await import("./skills-sync.js");
+        const { scanAllSkillDirs, scanAgentInstallations } = await import("./skills-sync.js");
         const cfg = await readConfig();
         const skills = await scanAllSkillDirs(cfg.directories || []);
-        sendJson(res, 200, skills);
+        const installations = await scanAgentInstallations(cfg.directories || [], options);
+        sendJson(res, 200, { skills, installations });
+        return;
+      }
+
+      // ── GET /api/skills/imported ── list Markdown staged for Agent installation
+      if (req.method === "GET" && url.pathname === "/api/skills/imported") {
+        const { readImportedSkills } = await import("./skills-sync.js");
+        sendJson(res, 200, await readImportedSkills(stateDir));
         return;
       }
 
@@ -717,17 +790,19 @@ function startWeb(options) {
         const body = await readRequestBody(req);
         const serverUrl = body?.server;
         if (!serverUrl) { sendError(res, 400, "Missing server"); return; }
-        const { scanAllSkillDirs, compareSkills } = await import("./skills-sync.js");
+        const { scanAllSkillDirs, compareSkills, readImportedSkills, scanAgentInstallations } = await import("./skills-sync.js");
         const cfg = await readConfig();
         const localSkills = await scanAllSkillDirs(cfg.directories || []);
+        const importedSkills = await readImportedSkills(stateDir);
+        const installations = await scanAgentInstallations(cfg.directories || [], options);
         const remoteUrl = String(serverUrl).replace(/\/+$/, "");
         let remoteSkills = [];
         try {
           const resp = await fetch(`${remoteUrl}/api/skills`);
           if (resp.ok) remoteSkills = await resp.json();
         } catch { /* server unreachable → all local-only */ }
-        const comparison = compareSkills(localSkills, remoteSkills);
-        sendJson(res, 200, { local: localSkills, remote: remoteSkills, comparison });
+        const comparison = compareSkills(localSkills, remoteSkills, importedSkills, installations);
+        sendJson(res, 200, { local: localSkills, remote: remoteSkills, imported: importedSkills, installations, comparison });
         return;
       }
 
@@ -752,7 +827,7 @@ function startWeb(options) {
           try {
             const resp = await fetch(`${remoteUrl}/api/skills`, {
               method: "POST", headers,
-              body: JSON.stringify({ name: skill.name, files: skill.files, last_modified: skill.last_modified, sha256: skill.sha256, device_id: hostname() }),
+              body: JSON.stringify({ name: skill.name, markdown: skill.markdown, last_modified: skill.last_modified, sha256: skill.sha256, device_id: hostname() }),
             });
             results.push({ name, ok: resp.ok });
           } catch (err) { results.push({ name, ok: false, error: err.message }); }
@@ -761,17 +836,13 @@ function startWeb(options) {
         return;
       }
 
-      // ── POST /api/skills/pull ── pull selected skills from remote
+      // ── POST /api/skills/pull ── import selected Markdown for later Agent installation
       if (req.method === "POST" && url.pathname === "/api/skills/pull") {
         const body = await readRequestBody(req);
         const serverUrl = body?.server;
         const names = body?.names || [];
         if (!serverUrl || !names.length) { sendError(res, 400, "Missing server or names"); return; }
-        const { writeSkillFiles } = await import("./skills-sync.js");
-        const cfg = await readConfig();
-        const skillDirs = (cfg.directories || []).filter((d) => d.type === "skills").map((d) => d.path);
-        if (!skillDirs.length) { sendError(res, 400, "No skill directories registered"); return; }
-        const targetDir = skillDirs[0]; // Write to first registered skill dir
+        const { importSkillMarkdown } = await import("./skills-sync.js");
         const remoteUrl = String(serverUrl).replace(/\/+$/, "");
         const results = [];
         for (const name of names) {
@@ -779,8 +850,8 @@ function startWeb(options) {
             const resp = await fetch(`${remoteUrl}/api/skills/${encodeURIComponent(name)}`);
             if (!resp.ok) { results.push({ name, ok: false, error: `HTTP ${resp.status}` }); continue; }
             const skill = await resp.json();
-            await writeSkillFiles(name, skill.files, targetDir);
-            results.push({ name, ok: true });
+            const imported = await importSkillMarkdown(skill, stateDir, remoteUrl);
+            results.push({ name, ok: true, imported });
           } catch (err) { results.push({ name, ok: false, error: err.message }); }
         }
         sendJson(res, 200, { results });

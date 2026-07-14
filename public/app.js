@@ -574,7 +574,7 @@ function renderLimits(snapshot) {
       limits.primary.window_minutes,
       limits.primary.resets_at,
       generatedAt,
-      null,
+      limits.plan_type,
       limitUpdatedAt,
     ));
   }
@@ -586,7 +586,7 @@ function renderLimits(snapshot) {
       limits.secondary.window_minutes,
       limits.secondary.resets_at,
       generatedAt,
-      null,
+      limits.plan_type,
       limitUpdatedAt,
     ));
   }
@@ -646,7 +646,11 @@ async function refreshLimitsOnly() {
       latestSnapshot.limit_updated_at = data.limit_updated_at;
     }
     renderLimits(latestSnapshot || { limits: data.limits, limit_updated_at: data.limit_updated_at });
-    const srcLabel = data.source === "synced_device" ? " (from synced device)" : "";
+    const srcLabel = data.source === "codex_app_server"
+      ? " (Codex live)"
+      : data.source === "synced_device"
+        ? " (from synced device)"
+        : "";
     if (data.stale) {
       toast(`Limits data is ${data.limit_age_hours}h old${srcLabel} — use Codex once to refresh`, "error");
     } else {
@@ -678,8 +682,8 @@ function renderProjects(snapshot) {
   $("projects").innerHTML = projects.map((p) =>
     usageRow(
       p.projectName || "unknown",
-      `${envLabel(p)} · ${p.costUSD != null ? fmtMoney(p.costUSD) + " · " : ""}${p.projectPath || ""}`,
-      fmtShort(p.totalTokens),
+      `${envLabel(p)} · ${p.projectPath || ""}`,
+      p.costUSD != null ? `${fmtShort(p.totalTokens)} · ${fmtMoney(p.costUSD)}` : fmtShort(p.totalTokens),
       { ratio: (p.totalTokens || 0) / total },
     )
   ).join("");
@@ -1068,13 +1072,11 @@ function renderSkills(snapshot) {
     return;
   }
   $("skills").innerHTML = skills.map((s) => {
-    const hasTokens = s.totalTokens && s.totalTokens > 0;
     const agentLabel = s.agent === "codex" ? "Codex" : s.agent === "claude" ? "Claude" : "";
-    const detail = `${s.count} call${s.count !== 1 ? "s" : ""}${agentLabel ? ` · ${agentLabel}` : ""}`;
     return usageRow(
       s.name,
-      detail,
-      hasTokens ? fmtShort(s.totalTokens) : "—",
+      agentLabel,
+      `${fmtNumber(s.count)} calls / ${fmtShort(s.totalTokens)} tokens`,
     );
   }).join("");
 }
@@ -1341,6 +1343,52 @@ let latestSnapshot = null;
 let trendViewIndex = 0;
 let modelViewIndex = 0;
 let sourcePromptShown = false;
+let detailSnapshotVersion = "";
+const detailLoads = new Set();
+
+const DETAIL_SECTIONS = {
+  projects: { panelId: "projectsPanel", targetId: "projects", field: "top_projects", render: renderProjects },
+  sessions: { panelId: "sessionsPanel", targetId: "sessions", field: "top_sessions", render: renderSessions },
+  skills: { panelId: "skillsPanel", targetId: "skills", field: "skills", render: renderSkills },
+};
+
+const detailObserver = typeof IntersectionObserver === "undefined"
+  ? null
+  : new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const section = entry.target.dataset.detailSection;
+      detailObserver.unobserve(entry.target);
+      loadDetail(section).catch(() => {});
+    }
+  }, { rootMargin: "160px" });
+
+function prepareDetails(snapshot) {
+  detailSnapshotVersion = snapshot.generated_at || "";
+  detailLoads.clear();
+  for (const [section, config] of Object.entries(DETAIL_SECTIONS)) {
+    const panel = $(config.panelId);
+    $(config.targetId).innerHTML = emptyState("Loading…");
+    panel.dataset.detailSection = section;
+    if (detailObserver) detailObserver.observe(panel);
+    else loadDetail(section).catch(() => {});
+  }
+}
+
+async function loadDetail(section) {
+  const config = DETAIL_SECTIONS[section];
+  if (!config || !latestSnapshot) return;
+  const key = `${detailSnapshotVersion}:${section}`;
+  if (detailLoads.has(key)) return;
+  detailLoads.add(key);
+
+  const response = await fetch(`/api/details?section=${encodeURIComponent(section)}`, { cache: "no-store" });
+  if (!response.ok) throw new Error(await response.text());
+  const detail = await response.json();
+  if (detail.generated_at !== detailSnapshotVersion || !latestSnapshot) return;
+  latestSnapshot[config.field] = detail[config.field] || [];
+  config.render(latestSnapshot);
+}
 
 function trendViews(snapshot) {
   const views = snapshot?.trend_views;
@@ -1388,9 +1436,12 @@ function renderTrend(snapshot) {
   drawTrend(selectedTrendSnapshot(snapshot));
 }
 
-async function refresh() {
-  $("meta").textContent = "Refreshing…";
-  const response = await fetch("/api/snapshot", { cache: "no-store" });
+async function refresh(rebuild = false) {
+  $("meta").textContent = rebuild ? "Refreshing data…" : "Loading…";
+  const response = await fetch(rebuild ? "/api/refresh" : "/api/snapshot", {
+    method: rebuild ? "POST" : "GET",
+    cache: "no-store",
+  });
   if (!response.ok) throw new Error(await response.text());
   const snapshot = await response.json();
   latestSnapshot = snapshot;
@@ -1400,11 +1451,9 @@ async function refresh() {
   renderTrend(snapshot);
   renderLimits(snapshot);
   renderActive(snapshot);
-  renderProjects(snapshot);
   renderModels(snapshot);
-  renderSkills(snapshot);
   renderEnvironments(snapshot);
-  renderSessions(snapshot);
+  prepareDetails(snapshot);
   maybePromptSourceImport(snapshot);
 }
 
@@ -1535,7 +1584,7 @@ $("syncPull").addEventListener("click", async () => {
 /* ── Bootstrap ───────────────────────────── */
 
 $("refresh").addEventListener("click", () => {
-  refresh().catch((err) => {
+  refresh(true).catch((err) => {
     $("meta").textContent = err.message;
   });
 });
@@ -1584,19 +1633,13 @@ $("modelNext").addEventListener("click", () => {
 $("hmPrev").addEventListener("click", () => {
   if (hmMonth === 0) { hmMonth = 11; hmYear--; }
   else hmMonth--;
-  fetch("/api/snapshot", { cache: "no-store" })
-    .then((r) => r.json())
-    .then((snap) => drawHeatmap(snap))
-    .catch(() => {});
+  if (latestSnapshot) drawHeatmap(latestSnapshot);
 });
 
 $("hmNext").addEventListener("click", () => {
   if (hmMonth === 11) { hmMonth = 0; hmYear++; }
   else hmMonth++;
-  fetch("/api/snapshot", { cache: "no-store" })
-    .then((r) => r.json())
-    .then((snap) => drawHeatmap(snap))
-    .catch(() => {});
+  if (latestSnapshot) drawHeatmap(latestSnapshot);
 });
 
 /* Handle resize for canvas DPI */
@@ -1604,18 +1647,13 @@ let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    fetch("/api/snapshot", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((snap) => {
-        latestSnapshot = snap;
-        drawHeatmap(snap);
-        renderTrend(snap);
-        renderModels(snap);
-      })
-      .catch(() => {
-        // Fallback: re-draw with cached snapshot if fetch fails
-        if (window.__modelChartSnapshot) drawModelChart(window.__modelChartSnapshot);
-      });
+    if (latestSnapshot) {
+      drawHeatmap(latestSnapshot);
+      renderTrend(latestSnapshot);
+      renderModels(latestSnapshot);
+    } else if (window.__modelChartSnapshot) {
+      drawModelChart(window.__modelChartSnapshot);
+    }
   }, 200);
 });
 
@@ -1768,6 +1806,20 @@ async function removeSource(path, type) {
 /* ── Skill Sync Panel ────────────────────── */
 
 let skillSyncSelections = {}; // name -> "push" | "pull" | null
+let skillSyncTotal = 0;
+
+function updateSkillSyncSummary() {
+  const pushCount = Object.values(skillSyncSelections).filter((value) => value === "push").length;
+  const importCount = Object.values(skillSyncSelections).filter((value) => value === "pull").length;
+  $("skillSyncSummary").textContent = `${skillSyncTotal} skills · ${pushCount} push · ${importCount} import selected`;
+}
+
+function setSkillSyncChecked(checkbox, checked) {
+  if (checkbox.disabled) return;
+  checkbox.checked = checked;
+  skillSyncSelections[checkbox.dataset.name] = checked ? checkbox.dataset.dir : null;
+  checkbox.closest(".skill-sync-item")?.classList.toggle("is-selected", checked);
+}
 
 /* ── Sync Tab Switching ──────────────────── */
 
@@ -1786,84 +1838,108 @@ $("syncTabToken").addEventListener("click", () => switchSyncTab("token"));
 $("syncTabSkill").addEventListener("click", () => {
   switchSyncTab("skill");
   if (syncServerUrl) $("skillSyncServer").value = syncServerUrl;
+  $("skillSyncCompare").click();
 });
 
 $("skillSyncCompare").addEventListener("click", async () => {
   const serverUrl = $("skillSyncServer").value.trim() || syncServerUrl;
-  if (!serverUrl) { $("skillSyncSummary").textContent = "Enter a server URL"; return; }
 
-  $("skillSyncSummary").textContent = "Comparing…";
+  $("skillSyncSummary").textContent = "Loading skills…";
   try {
-    const res = await fetch("/api/skills/compare", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ server: serverUrl }),
-    });
+    const res = serverUrl
+      ? await fetch("/api/skills/compare", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ server: serverUrl }),
+        })
+      : await fetch("/api/skills/imported");
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    const comparison = data.comparison || [];
+    const comparison = serverUrl
+      ? data.comparison || []
+      : (data || []).map((imported) => ({
+          name: imported.name,
+          status: "imported-only",
+          install_status: imported.install_status,
+          local: null,
+          remote: null,
+          imported,
+        }));
     if (!comparison.length) {
-      $("skillSyncList").innerHTML = `<div class="empty"><p>No skills found. Register a third-party skill directory in Sources panel first.</p></div>`;
+      $("skillSyncList").innerHTML = `<div class="empty"><p>No installed, imported, or remote skills found.</p></div>`;
       $("skillSyncActions").style.display = "none";
       $("skillSyncSummary").textContent = "0 skills";
       return;
     }
 
     skillSyncSelections = {};
-    let localCount = 0, remoteCount = 0;
-    const rows = comparison.map((item) => {
-      const badge =
-        item.status === "same" ? `<span class="badge badge-ok" style="font-size:10px">same</span>`
-        : item.status === "newer" ? `<span class="badge badge-active" style="font-size:10px">local newer</span>`
-        : item.status === "older" ? `<span class="badge badge-idle" style="font-size:10px">remote newer</span>`
-        : item.status === "local-only" ? `<span class="badge badge-active" style="font-size:10px">local only</span>`
-        : `<span class="badge badge-idle" style="font-size:10px">remote only</span>`;
+    skillSyncTotal = comparison.length;
+    const items = comparison.map((item) => {
+      const installedAgents = (item.installations || [])
+        .map((installation) => installation.agent === "codex" ? "Codex" : installation.agent === "claude" ? "Claude" : installation.agent)
+        .filter((agent, index, agents) => agents.indexOf(agent) === index);
 
       // Determine available actions
       const canPush = item.status === "newer" || item.status === "local-only";
-      const canPull = item.status === "older" || item.status === "remote-only";
-      if (canPush) { skillSyncSelections[item.name] = "push"; localCount++; }
-      else if (canPull) { skillSyncSelections[item.name] = "pull"; remoteCount++; }
+      const importedCurrent = item.remote && item.imported && item.remote.sha256 === item.imported.sha256;
+      const canPull = (item.status === "older" || item.status === "remote-only") && !importedCurrent;
+      if (canPush) skillSyncSelections[item.name] = "push";
+      else if (canPull) skillSyncSelections[item.name] = "pull";
       else skillSyncSelections[item.name] = null;
 
-      const actionHtml = canPush
-        ? `<button class="btn sync-action-btn" data-name="${esc(item.name)}" data-dir="push" style="font-size:11px;padding:2px 8px">Push ▲</button>`
-        : canPull
-        ? `<button class="btn sync-action-btn" data-name="${esc(item.name)}" data-dir="pull" style="font-size:11px;padding:2px 8px">Pull ▼</button>`
-        : "";
-
-      return `<div class="row" style="align-items:center">
-        <div>
-          <div class="row-title">${esc(item.name)} ${badge}</div>
-          <div class="row-detail">${item.local ? `local: ${item.local.last_modified?.slice(0,10) || "?"}` : "no local"} · ${item.remote ? `remote: ${item.remote.last_modified?.slice(0,10) || "?"}` : "no remote"}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:6px">${actionHtml}</div>
-      </div>`;
+      const direction = canPush ? "push" : canPull ? "pull" : null;
+      const directionLabel = canPush ? "Push ↑" : canPull ? "Import ↓" : item.status === "same" ? "Synced" : item.status.replaceAll("-", " ");
+      const installLabel = installedAgents.length
+        ? installedAgents.join(" + ")
+        : item.install_status === "pending-agent-install"
+          ? "Pending install"
+          : "Not installed";
+      const title = [
+        item.name,
+        `Sync: ${directionLabel}`,
+        `Install: ${installLabel}`,
+        item.local?.source_markdown ? `Local: ${item.local.source_markdown}` : null,
+      ].filter(Boolean).join(" · ");
+      return {
+        actionable: Boolean(direction),
+        html: `<label class="skill-sync-item${direction ? " is-selected" : " is-settled"}" title="${esc(title)}">
+          <input class="skill-sync-check" type="checkbox" data-name="${esc(item.name)}" data-dir="${direction || ""}" ${direction ? "checked" : "disabled"} />
+          <span>
+            <span class="skill-sync-name">${esc(item.name)}</span>
+            <span class="skill-sync-meta">
+              <span class="skill-sync-direction ${canPush ? "push" : canPull ? "import" : ""}">${esc(directionLabel)}</span>
+              <span>·</span>
+              <span>${esc(installLabel)}</span>
+            </span>
+          </span>
+        </label>`,
+      };
     });
 
-    $("skillSyncList").innerHTML = rows.join("");
+    items.sort((a, b) => Number(b.actionable) - Number(a.actionable));
+    $("skillSyncList").innerHTML = `<div class="skill-sync-grid">${items.map((item) => item.html).join("")}</div>`;
     $("skillSyncActions").style.display = "flex";
-    $("skillSyncSummary").textContent = `${comparison.length} skills · ${localCount} push · ${remoteCount} pull`;
+    updateSkillSyncSummary();
 
-    // Bind action buttons
-    $("skillSyncList").querySelectorAll(".sync-action-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const name = btn.dataset.name;
-        const dir = btn.dataset.dir;
-        skillSyncSelections[name] = dir;
-        // Highlight selected, dim others
-        $("skillSyncList").querySelectorAll(".sync-action-btn").forEach((b) => {
-          b.style.opacity = b.dataset.name === name ? "1" : "0.5";
-        });
-        // Also allow toggling
-        if (skillSyncSelections[name] === dir) {
-          btn.style.opacity = "1";
-        }
+    $("skillSyncList").querySelectorAll(".skill-sync-check").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        setSkillSyncChecked(checkbox, checkbox.checked);
+        updateSkillSyncSummary();
       });
     });
   } catch (err) {
     $("skillSyncSummary").textContent = "Error: " + err.message;
   }
+});
+
+$("skillSyncSelectAll").addEventListener("click", () => {
+  $("skillSyncList").querySelectorAll(".skill-sync-check").forEach((checkbox) => setSkillSyncChecked(checkbox, true));
+  updateSkillSyncSummary();
+});
+
+$("skillSyncClear").addEventListener("click", () => {
+  $("skillSyncList").querySelectorAll(".skill-sync-check").forEach((checkbox) => setSkillSyncChecked(checkbox, false));
+  updateSkillSyncSummary();
 });
 
 $("skillSyncApply").addEventListener("click", async () => {
@@ -1891,7 +1967,7 @@ $("skillSyncApply").addEventListener("click", async () => {
       toast(`Pushed ${ok}/${pushNames.length} skills`, "success");
     }
     if (pullNames.length) {
-      $("skillSyncSummary").textContent = `Pulling ${pullNames.length} skill(s)…`;
+      $("skillSyncSummary").textContent = `Importing ${pullNames.length} skill(s)…`;
       const res = await fetch("/api/skills/pull", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1899,9 +1975,10 @@ $("skillSyncApply").addEventListener("click", async () => {
       });
       const data = await res.json();
       const ok = data.results?.filter((r) => r.ok).length || 0;
-      toast(`Pulled ${ok}/${pullNames.length} skills`, "success");
+      toast(`Imported ${ok}/${pullNames.length} skills`, "success");
     }
-    $("skillSyncList").innerHTML = ""; $("skillSyncActions").style.display = "none";
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    $("skillSyncCompare").click();
   } catch (err) {
     toast("Skill sync failed: " + err.message, "error");
   } finally {

@@ -1,3 +1,5 @@
+import { aggregateEvents } from "./loader.js";
+
 const SNAPSHOT_SCHEMA_VERSION = "0.2";
 
 function todayKey(now = new Date()) {
@@ -85,60 +87,9 @@ function sortByLastActivityDesc(rows) {
   });
 }
 
-function sumModelBreakdown(rows) {
-  const models = new Map();
-  for (const row of rows) {
-    for (const [model, usage] of Object.entries(row.models || {})) {
-      const current = models.get(model) || {
-        inputTokens: 0,
-        cacheCreationTokens: 0,
-        cacheReadTokens: 0,
-        outputTokens: 0,
-        reasoningOutputTokens: 0,
-        totalTokens: 0,
-        eventCount: 0,
-        costUSD: null,
-        isFallback: false,
-      };
-      current.inputTokens += number(usage.inputTokens);
-      current.cacheCreationTokens += number(usage.cacheCreationTokens);
-      current.cacheReadTokens += number(usage.cacheReadTokens);
-      current.outputTokens += number(usage.outputTokens);
-      current.reasoningOutputTokens += number(usage.reasoningOutputTokens);
-      current.totalTokens += number(usage.totalTokens);
-      addCost(current, usage.costUSD);
-      current.isFallback = current.isFallback || Boolean(usage.isFallback);
-      current.costPricingFallback = current.costPricingFallback || Boolean(usage.costPricingFallback);
-      if (usage.costPricingModel) current.costPricingModel = usage.costPricingModel;
-      models.set(model, current);
-    }
-  }
-  return Object.fromEntries(models);
-}
-
-/**
- * Count events per model from raw events.
- * Returns { modelName: count, ... }
- */
-function countEventsByModel(events) {
-  const counts = {};
-  for (const event of events) {
-    const model = event.model || "unknown";
-    counts[model] = (counts[model] || 0) + 1;
-  }
-  return counts;
-}
-
-/**
- * Merge per-model event counts into a models object built by sumModelBreakdown.
- */
-function mergeEventCounts(models, eventCounts) {
-  for (const [model, count] of Object.entries(eventCounts)) {
-    if (models[model]) {
-      models[model].eventCount = count;
-    }
-  }
-  return models;
+function withModelUsage(row, modelUsage) {
+  if (!row?.models || typeof row.models !== "object") return row || null;
+  return { ...row, models: modelUsage.models };
 }
 
 function addDerived(row) {
@@ -294,26 +245,40 @@ function buildTrendViews(events, totalRows, today, totals, options = {}) {
 
 export function buildSnapshot(reports, options = {}) {
   const generatedAt = new Date();
+  const events = reports.events || [];
   const dailyRows = (reports.daily.daily || []).map(addDerived);
   const sessionRows = sortByLastActivityDesc(
     (reports.sessions.sessions || []).map(addDerived),
   );
   const projectRows = (reports.projects?.projects || []).map(addDerived);
-  const today = dailyRows.find((row) => row.date === todayKey(generatedAt));
+  const todayDate = todayKey(generatedAt);
+  const todayEvents = events.filter(
+    (event) => dayKey(event.timestamp, options.timezone) === todayDate,
+  );
+  const todayModelUsage = aggregateEvents(todayEvents);
+  const totalModelUsage = aggregateEvents(events);
+  const today = withModelUsage(
+    dailyRows.find((row) => row.date === todayDate),
+    todayModelUsage,
+  );
+  const totals = withModelUsage(
+    reports.daily.totals || reports.sessions.totals || null,
+    totalModelUsage,
+  );
   const recentDays = dailyRows.slice(-35); // compact trend window
   const activityDays = dailyRows.slice(-93); // roughly three months for heatmap
   const trendViews = buildTrendViews(
-    reports.events || [],
+    events,
     recentDays,
     today || null,
-    reports.daily.totals || reports.sessions.totals || null,
+    totals,
     options,
   );
 
   // Per-source activity status (detect expired/inactive agents)
   const todayStr = todayKey(generatedAt);
   const sourceStatus = {};
-  for (const evt of reports.events) {
+  for (const evt of events) {
     // Normalise source: Codex events come from "sessions"/"archived_sessions"/"codex-jsonl"
     const raw = evt.source || "unknown";
     const src = raw === "claude" ? "claude" : "codex";
@@ -358,10 +323,10 @@ export function buildSnapshot(reports, options = {}) {
   sourceStatus.codex ||= { total_events: 0, today_events: 0, today_tokens: 0, last_activity: null, status: "unknown" };
   sourceStatus.claude ||= { total_events: 0, today_events: 0, today_tokens: 0, last_activity: null, status: "unknown" };
 
-  const latestRateLimitEvent = latestEventWithRateLimits(reports.events);
+  const latestRateLimitEvent = latestEventWithRateLimits(events);
   const limits = latestRateLimitEvent?.rateLimits || null;
   const limitUpdatedAt = latestRateLimitEvent?.timestamp || null;
-  const burnRate = buildBurnRate(reports.events, sessionRows[0] || null, generatedAt);
+  const burnRate = buildBurnRate(events, sessionRows[0] || null, generatedAt);
   const activeSession = enrichActiveSession(sessionRows[0] || null, generatedAt, burnRate);
   const topSessions = [...sessionRows]
     .sort((a, b) => tokenTotal(b) - tokenTotal(a))
@@ -406,18 +371,15 @@ export function buildSnapshot(reports, options = {}) {
     trend_views: trendViews,
     top_sessions: topSessions,
     top_projects: topProjects,
-    totals: reports.daily.totals || reports.sessions.totals || null,
-    models: mergeEventCounts(
-      sumModelBreakdown(sessionRows),
-      countEventsByModel(reports.events),
-    ),
+    totals,
+    models: totalModelUsage.models,
     skills: reports.skills || [],
     forecast: buildForecast(recentDays),
     diagnostics: {
       files_read: reports.tool?.filesRead || 0,
       session_index_entries: reports.tool?.sessionIndexEntries || 0,
       thread_state_entries: reports.tool?.threadStateEntries || 0,
-      events_read: reports.events?.length || 0,
+      events_read: events.length,
       latest_rate_limit_at: latestRateLimitEvent?.timestamp || null,
     },
     status,

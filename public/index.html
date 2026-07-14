@@ -89,17 +89,16 @@
         </div>
         <!-- Skill Sync content -->
         <div id="syncContentSkill" style="display:none">
-          <div style="margin-bottom:8px;font-size:11px;color:#64748b">
-            Third-party skill directories registered in Sources panel.
-          </div>
           <div style="display:flex;gap:8px;margin-bottom:12px">
-            <button id="skillSyncCompare" class="btn">Compare with Server</button>
+            <button id="skillSyncCompare" class="btn">Refresh Skills</button>
             <input id="skillSyncServer" placeholder="http://your-server:34777" style="flex:1;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
           </div>
           <div id="skillSyncList"></div>
-          <div id="skillSyncActions" style="display:none;margin-top:12px;display:flex;gap:8px">
+          <div id="skillSyncActions" class="skill-sync-actions" style="display:none">
+            <button id="skillSyncSelectAll" class="btn">Select pending</button>
+            <button id="skillSyncClear" class="btn">Clear</button>
             <button id="skillSyncApply" class="btn" style="background:#22c55e;color:#0b1120;border-color:#22c55e;font-weight:600">Apply Selected</button>
-            <span id="skillSyncSummary" style="font-size:11px;color:#64748b;align-self:center"></span>
+            <span id="skillSyncSummary" class="skill-sync-summary"></span>
           </div>
         </div>
       </section>
@@ -165,7 +164,7 @@
           </div>
         </section>
 
-        <section class="panel">
+        <section class="panel" id="projectsPanel">
           <div class="panel-head">
             <h2>Projects</h2>
             <span class="panel-sub">Usage by workspace</span>
@@ -186,7 +185,7 @@
           <div id="active"></div>
         </section>
 
-        <section class="panel">
+        <section class="panel" id="sessionsPanel">
           <div class="panel-head">
             <h2>Top Sessions</h2>
             <span class="panel-sub">Largest consumers</span>
@@ -204,10 +203,10 @@
           <div id="environments"></div>
         </section>
 
-        <section class="panel tools-panel">
+        <section class="panel tools-panel" id="skillsPanel">
           <div class="panel-head">
-            <h2>Tool Calls</h2>
-            <span class="panel-sub">Codex tools + Claude skill invocations</span>
+            <h2>Skills &amp; MCP</h2>
+            <span class="panel-sub">User-installed capabilities</span>
           </div>
           <div id="skills"></div>
         </section>
