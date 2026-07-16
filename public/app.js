@@ -30,6 +30,7 @@ function fmtNumber(value) {
 
 function fmtShort(value) {
   const n = Number(value || 0);
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(Math.round(n));
@@ -645,8 +646,9 @@ async function refreshLimitsOnly() {
       latestSnapshot.limits = data.limits;
       latestSnapshot.limit_updated_at = data.limit_updated_at;
     }
+    if (latestSnapshot) renderMetrics(latestSnapshot);
     renderLimits(latestSnapshot || { limits: data.limits, limit_updated_at: data.limit_updated_at });
-    const srcLabel = data.source === "codex_app_server"
+    const srcLabel = data.source === "codex_app_server" || data.source === "codex_status_api"
       ? " (Codex live)"
       : data.source === "synced_device"
         ? " (from synced device)"
@@ -1084,7 +1086,10 @@ function renderSkills(snapshot) {
 function renderEnvironments(snapshot) {
   const views = (snapshot.trend_views || [])
     .filter((view) => view.id !== "total" && (view.today || view.totals))
-    .sort((a, b) => (b.today?.totalTokens || 0) - (a.today?.totalTokens || 0));
+    .sort((a, b) =>
+      (b.today?.totalTokens || 0) - (a.today?.totalTokens || 0) ||
+      (b.totals?.totalTokens || 0) - (a.totals?.totalTokens || 0)
+    );
   const environments = views.length ? views : [{
     id: "local",
     display_name: "This environment",
@@ -1096,17 +1101,24 @@ function renderEnvironments(snapshot) {
   $("environmentsSummary").textContent = `${environments.length} environment${environments.length === 1 ? "" : "s"}`;
   $("environments").innerHTML = environments.map((view) => {
     const today = view.today || {};
-    const lastActivity = today.lastActivity || view.totals?.lastActivity;
+    const totals = view.totals || {};
+    const lastActivity = today.lastActivity || totals.lastActivity;
     const active = lastActivity && Date.now() - Date.parse(lastActivity) < 60 * 60 * 1000;
-    const deviceName = view.device_name ? `${view.device_name} · ` : "";
+    const deviceName = view.device_name
+      ? `${view.device_name} · `
+      : Array.isArray(view.device_names) && view.device_names.length > 1
+        ? `${view.device_names.length} devices · `
+        : "";
+    const todayTokens = today.totalTokens || 0;
+    const totalTokens = totals.totalTokens || todayTokens;
     const activity = lastActivity
-      ? `${deviceName}${today.eventCount || 0} requests · ${fmtCompactTime(lastActivity)}`
+      ? `${deviceName}total ${fmtShort(totalTokens)} · ${today.eventCount || 0} requests · ${fmtCompactTime(lastActivity)}`
       : `${deviceName}No activity`;
     return usageRow(
       view.display_name || view.label || view.id || "Unknown environment",
       activity,
-      fmtShort(today.totalTokens || 0),
-      { ratio: (today.totalTokens || 0) / tokenMax, badge: active ? "active" : "idle" },
+      fmtShort(todayTokens),
+      { ratio: todayTokens / tokenMax, badge: active ? "active" : "idle" },
     );
   }).join("");
 }

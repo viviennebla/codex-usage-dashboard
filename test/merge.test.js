@@ -136,8 +136,44 @@ test("does not expose stale device usage in environment today views", () => {
     }],
   };
   const merged = mergeSnapshots(new Map([["stale", { deviceName: "stale", snapshot }]]));
-  const view = merged.trend_views.find((item) => item.id === "stale:macos");
+  const view = merged.trend_views.find((item) => item.id === "macOS");
 
-  assert.equal(view.today, null);
+  assert.equal(view.today.totalTokens, 0);
   assert.equal(view.totals.totalTokens, 900);
+});
+
+test("combines trend views by environment across synced devices", () => {
+  const view = (tokens) => ({
+    id: "windows",
+    label: "windows",
+    display_name: "windows",
+    environment: "windows",
+    recent_days: [{ date: "2026-07-14", totalTokens: tokens, eventCount: 1 }],
+    today: { totalTokens: tokens, eventCount: 1 },
+    totals: { totalTokens: tokens, eventCount: 1 },
+  });
+  const merged = mergeSnapshots(new Map([
+    ["one", { deviceName: "one", snapshot: { trend_views: [view(100)], today: view(100).today, totals: view(100).totals } }],
+    ["two", { deviceName: "two", snapshot: { trend_views: [view(200)], today: view(200).today, totals: view(200).totals } }],
+  ]));
+
+  const windows = merged.trend_views.find((entry) => entry.id === "windows");
+  assert.equal(windows.today.totalTokens, 300);
+  assert.equal(windows.totals.totalTokens, 300);
+  assert.deepEqual(windows.device_names, ["one", "two"]);
+});
+
+test("keeps existing project costs when an older snapshot lacks model details", () => {
+  const merged = mergeSnapshots(new Map([
+    ["legacy", {
+      deviceName: "legacy",
+      snapshot: {
+        today: { totalTokens: 10 },
+        totals: { totalTokens: 10 },
+        top_projects: [{ projectName: "app", totalTokens: 10, costUSD: 1.23 }],
+      },
+    }],
+  ]));
+
+  assert.equal(merged.top_projects[0].costUSD, 1.23);
 });

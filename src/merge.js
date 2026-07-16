@@ -28,7 +28,7 @@ function addCost(target, value) {
 
 function repriceAggregate(row, config) {
   if (!row || !row.models || typeof row.models !== "object") {
-    return row ? { ...row, costUSD: null } : row;
+    return row ? { ...row, costUSD: row.costUSD ?? null } : row;
   }
 
   const models = {};
@@ -179,6 +179,28 @@ function mergeActivityDays(deviceEntries) {
   return [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
+function mergeRowsByDate(existingRows = [], incomingRows = []) {
+  const byDate = new Map();
+  for (const row of [...existingRows, ...incomingRows]) {
+    if (!row?.date) continue;
+    if (!byDate.has(row.date)) byDate.set(row.date, { ...blankAggregate(), date: row.date });
+    addToAggregate(byDate.get(row.date), row);
+  }
+  return [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+function viewKey(view, fallback) {
+  return String(view?.environment || view?.display_name || view?.label || view?.id || fallback || "unknown");
+}
+
+function mergeTrendView(target, view) {
+  target.recent_days = mergeRowsByDate(target.recent_days, view.recent_days || []);
+  if (view.today) addToAggregate(target.today, view.today);
+  if (view.totals) addToAggregate(target.totals, view.totals);
+  target.firstActivity = earliest(target.firstActivity, view.totals?.firstActivity || view.today?.firstActivity);
+  target.lastActivity = latest(target.lastActivity, view.totals?.lastActivity || view.today?.lastActivity);
+}
+
 function mergeTotals(deviceEntries) {
   const totals = blankAggregate();
   for (const [, { snapshot }] of deviceEntries) {
@@ -250,6 +272,7 @@ function buildTrendViews(deviceEntries, mergedRecentDays, mergedToday, mergedTot
     today: mergedToday,
     totals: mergedTotals,
   }];
+  const environmentViews = new Map();
 
   for (const [deviceId, { deviceName, snapshot }] of deviceEntries) {
     const labelPrefix = deviceName || deviceId;
@@ -257,32 +280,58 @@ function buildTrendViews(deviceEntries, mergedRecentDays, mergedToday, mergedTot
     const usableSubViews = subViews.filter((view) => view?.id && view.id !== "total");
     if (usableSubViews.length > 0) {
       for (const view of usableSubViews) {
-        const label = view.display_name || view.label || labelPrefix;
-        views.push({
-          ...view,
-          id: `${deviceId}:${view.id}`,
-          device_id: deviceId,
-          device_name: labelPrefix,
-          label,
-          display_name: label,
-          today: currentToday(view.today),
-        });
+        const key = viewKey(view, labelPrefix);
+        const label = view.display_name || view.label || key;
+        if (!environmentViews.has(key)) {
+          environmentViews.set(key, {
+            id: key,
+            label,
+            display_name: label,
+            detected_name: view.detected_name,
+            environment: view.environment,
+            environment_kind: view.environment_kind,
+            device_ids: [],
+            device_names: [],
+            recent_days: [],
+            today: blankAggregate(),
+            totals: blankAggregate(),
+          });
+        }
+        const target = environmentViews.get(key);
+        if (!target.device_ids.includes(deviceId)) target.device_ids.push(deviceId);
+        if (!target.device_names.includes(labelPrefix)) target.device_names.push(labelPrefix);
+        mergeTrendView(target, { ...view, today: currentToday(view.today) });
       }
       continue;
     }
 
-    views.push({
-      id: `${deviceId}:total`,
-      device_id: deviceId,
-      device_name: labelPrefix,
-      label: labelPrefix,
-      display_name: labelPrefix,
+    const key = labelPrefix;
+    if (!environmentViews.has(key)) {
+      environmentViews.set(key, {
+        id: key,
+        device_ids: [],
+        device_names: [],
+        label: labelPrefix,
+        display_name: labelPrefix,
+        recent_days: [],
+        today: blankAggregate(),
+        totals: blankAggregate(),
+      });
+    }
+    const target = environmentViews.get(key);
+    if (!target.device_ids.includes(deviceId)) target.device_ids.push(deviceId);
+    if (!target.device_names.includes(labelPrefix)) target.device_names.push(labelPrefix);
+    mergeTrendView(target, {
       recent_days: snapshot?.recent_days || [],
       today: currentToday(snapshot?.today),
       totals: snapshot?.totals || null,
     });
   }
 
+  views.push(...[...environmentViews.values()].map((view) => ({
+    ...view,
+    device_name: view.device_names?.length === 1 ? view.device_names[0] : null,
+  })));
   return views;
 }
 
