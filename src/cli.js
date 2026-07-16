@@ -17,6 +17,7 @@ import {
 import { addDirectory, listDirectories, removeDirectory, readConfig } from "./config.js";
 import { pullFromServer, recordSyncStatus } from "./sync.js";
 import { discoverSourceDiagnostics, inspectSource, sourceLabelMap } from "./sources.js";
+import { readCodexStatusRateLimits } from "./status.js";
 
 process.stdout.on("error", () => {});
 process.stderr.on("error", () => {});
@@ -82,9 +83,30 @@ Commands:
 
 async function createSnapshot(options) {
   const reports = await loadAllReports(options);
-  const snapshot = buildSnapshot(reports, options);
+  const snapshot = await applyStatusLimits(buildSnapshot(reports, options));
   await writeStateFile(snapshot, options.state);
   return snapshot;
+}
+
+async function applyStatusLimits(snapshot) {
+  try {
+    const status = await readCodexStatusRateLimits({ timeoutMs: 5000 });
+    return {
+      ...snapshot,
+      limits: status.limits,
+      limit_updated_at: status.limit_updated_at,
+      limit_source: status.source,
+      limit_error: null,
+    };
+  } catch (error) {
+    return {
+      ...snapshot,
+      limits: null,
+      limit_updated_at: null,
+      limit_source: "unavailable",
+      limit_error: error?.message || "Codex status API unavailable",
+    };
+  }
 }
 
 async function serveStatic(pathname) {
@@ -208,18 +230,12 @@ function startWeb(options) {
 
           // Carry over device-specific fields from local snapshot
           merged.skills = snapshot.skills || [];
-          // Pick the most recent limits + limit_updated_at across all devices
-          let bestLimits = snapshot.limits || null;
-          let bestLimitAt = snapshot.limit_updated_at || null;
-          for (const [, { snapshot: devSnap }] of allDevices) {
-            const devAt = devSnap?.limit_updated_at;
-            if (devAt && (!bestLimitAt || devAt > bestLimitAt)) {
-              bestLimitAt = devAt;
-              if (devSnap?.limits) bestLimits = devSnap.limits;
-            }
-          }
-          merged.limits = bestLimits;
-          merged.limit_updated_at = bestLimitAt;
+          // Rate limits are account/session-local status. Keep them tied to
+          // this machine instead of copying a synced device's limit sample.
+          merged.limits = snapshot.limits || null;
+          merged.limit_updated_at = snapshot.limit_updated_at || null;
+          merged.limit_source = snapshot.limit_source || null;
+          merged.limit_error = snapshot.limit_error || null;
           merged.burn_rate = snapshot.burn_rate || null;
           merged.active_session = snapshot.active_session || null;
           // Expose device list for frontend
@@ -327,161 +343,18 @@ function startWeb(options) {
 
       // ── GET /api/limits ── fast rate-limit refresh
       if (req.method === "GET" && url.pathname === "/api/limits") {
-        const { readdir, readFile } = await import("node:fs/promises");
-        const { join } = await import("node:path");
-        const { homedir } = await import("node:os");
-
-        let probed = false;
-
-        // ── Step 1: Probe Codex API for live rate limits ──
         try {
-          const authRaw = await readFile(join(homedir(), ".codex", "auth.json"), "utf8");
-          const auth = JSON.parse(authRaw);
-          const tokens = auth.tokens || {};
-          // Get the first available token
-          // OAuth JWT: tokens.access_token is the Bearer; fallback to OPENAI_API_KEY
-          const apiKey = auth.OPENAI_API_KEY
-            || (typeof tokens.access_token === "string" ? tokens.access_token : null)
-            || Object.values(tokens).find((v) => typeof v === "string" && v.length > 20)
-            || null;
-
-          if (apiKey) {
-            // Read config.toml for base_url
-            let baseUrl = "https://api.openai.com/v1";
-            let model = "gpt-4o-mini";
-            try {
-              const tomlRaw = await readFile(join(homedir(), ".codex", "config.toml"), "utf8");
-              const urlMatch = tomlRaw.match(/base_url\s*=\s*"([^"]+)"/);
-              if (urlMatch) baseUrl = urlMatch[1];
-              const modelMatch = tomlRaw.match(/model\s*=\s*"([^"]+)"/);
-              if (modelMatch) model = modelMatch[1];
-            } catch {}
-
-            // Minimal probe: "hi" → 1 token output
-            const probeResp = await fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                "authorization": `Bearer ${apiKey}`,
-              },
-              body: JSON.stringify({
-                model,
-                messages: [{ role: "user", content: "hi" }],
-                max_tokens: 1,
-                temperature: 0,
-              }),
-            });
-
-            if (probeResp.ok) {
-              // Check response body for rate_limits field
-              const probeData = await probeResp.json();
-              const rl = probeData.rate_limits || probeData.rateLimits;
-              if (rl) {
-                const limits = { ...rl };
-                // Convert epoch → ISO
-                for (const key of ["primary", "secondary"]) {
-                  if (limits[key]?.resets_at && typeof limits[key].resets_at === "number") {
-                    limits[key] = { ...limits[key], resets_at: new Date(limits[key].resets_at * 1000).toISOString() };
-                  }
-                }
-                sendJson(res, 200, {
-                  limits,
-                  limit_updated_at: new Date().toISOString(),
-                  generated_at: new Date().toISOString(),
-                  probe: true,
-                  probe_tokens: probeData.usage?.total_tokens || 0,
-                });
-                probed = true;
-              }
-            }
-          }
-        } catch { /* probe failed — fall back to file scan */ }
-
-        if (probed) return;
-
-        // ── Step 2: Fallback — scan most recent session files ──
-        async function findLatestLimits(dataDir) {
-          try {
-            async function walk(dir, depth = 0) {
-              const files = [];
-              if (depth > 4) return files;
-              try {
-                const ents = await readdir(dir, { withFileTypes: true });
-                for (const e of ents) {
-                  const full = join(dir, e.name);
-                  if (e.isFile() && e.name.endsWith(".jsonl")) files.push(full);
-                  else if (e.isDirectory()) {
-                    const subs = await walk(full, depth + 1);
-                    files.push(...subs);
-                  }
-                }
-              } catch {}
-              return files;
-            }
-            const allFiles = await walk(dataDir);
-            if (!allFiles.length) return null;
-            const candidates = allFiles.sort().slice(-3);
-            for (const f of candidates.reverse()) {
-              try {
-                const raw = await readFile(f, "utf8");
-                const lines = raw.trim().split(/\r?\n/);
-                for (let i = lines.length - 1; i >= Math.max(0, lines.length - 100); i--) {
-                  try {
-                    const obj = JSON.parse(lines[i]);
-                    const rl = obj.rate_limits || obj.rateLimits || obj.payload?.rate_limits || obj.payload?.rateLimits;
-                    if (rl) return { rateLimits: rl, timestamp: obj.timestamp || null };
-                  } catch { continue; }
-                }
-              } catch { continue; }
-            }
-          } catch { return null; }
-          return null;
+          const statusResult = await readCodexStatusRateLimits();
+          sendJson(res, 200, {
+            ...statusResult,
+            limit_age_hours: 0,
+            stale: false,
+            generated_at: new Date().toISOString(),
+          });
+          return;
+        } catch (error) {
+          sendError(res, 502, `Codex status API unavailable: ${error?.message || "unknown error"}`);
         }
-
-        const home = homedir();
-        const [codexResult, claudeResult] = await Promise.all([
-          findLatestLimits(join(home, ".codex", "sessions")),
-          findLatestLimits(join(home, ".claude", "projects")),
-        ]);
-
-        // Also check synced device snapshots for newer limit data
-        const deviceCandidates = [];
-        const deviceStates = await readDeviceStates(stateDir);
-        for (const [, { snapshot: devSnap }] of deviceStates) {
-          if (devSnap?.limits && devSnap?.limit_updated_at) {
-            deviceCandidates.push({
-              rateLimits: devSnap.limits,
-              timestamp: devSnap.limit_updated_at,
-            });
-          }
-        }
-
-        const best = [codexResult, claudeResult, ...deviceCandidates]
-          .filter(Boolean)
-          .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))[0] || null;
-
-        const limits = best?.rateLimits ? { ...best.rateLimits } : null;
-        if (limits) {
-          for (const key of ["primary", "secondary"]) {
-            if (limits[key]?.resets_at && typeof limits[key].resets_at === "number") {
-              limits[key] = { ...limits[key], resets_at: new Date(limits[key].resets_at * 1000).toISOString() };
-            }
-          }
-        }
-
-        const limitAge = best?.timestamp
-          ? Math.round((Date.now() - new Date(best.timestamp).getTime()) / 3600000 * 10) / 10
-          : null;
-        // Determine source: local file scan or synced device
-        const fromDevice = deviceCandidates.includes(best);
-        sendJson(res, 200, {
-          limits,
-          limit_updated_at: best?.timestamp || null,
-          limit_age_hours: limitAge,
-          source: fromDevice ? "synced_device" : "local_scan",
-          stale: limitAge !== null && limitAge > 1,
-          generated_at: new Date().toISOString(),
-        });
         return;
       }
 
