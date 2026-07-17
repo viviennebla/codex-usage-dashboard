@@ -1819,16 +1819,17 @@ async function removeSource(path, type) {
 
 let skillSyncSelections = {}; // name -> "push" | "pull" | null
 let skillSyncTotal = 0;
+let skillSyncLoaded = false;
 
 function updateSkillSyncSummary() {
   const pushCount = Object.values(skillSyncSelections).filter((value) => value === "push").length;
-  const importCount = Object.values(skillSyncSelections).filter((value) => value === "pull").length;
-  const installCount = document.querySelectorAll(".skill-sync-check[data-installable='true']:checked").length;
+  const pullCount = Object.values(skillSyncSelections).filter((value) => value === "pull").length;
+  const promptCount = document.querySelectorAll(".skill-sync-check[data-promptable='true']:checked").length;
   const copyButton = $("skillSyncCopyInstallPrompt");
-  if (copyButton) copyButton.disabled = installCount === 0;
+  if (copyButton) copyButton.disabled = promptCount === 0;
   const applyButton = $("skillSyncApply");
-  if (applyButton) applyButton.disabled = pushCount + importCount === 0;
-  $("skillSyncSummary").textContent = `${skillSyncTotal} skills · ${pushCount} push · ${importCount} pull · ${installCount} install selected`;
+  if (applyButton) applyButton.disabled = pushCount + pullCount === 0;
+  $("skillSyncSummary").textContent = `${skillSyncTotal} skills · ${pushCount} push · ${pullCount} pull · ${promptCount} prompt selected`;
 }
 
 function setSkillSyncChecked(checkbox, checked) {
@@ -1839,7 +1840,7 @@ function setSkillSyncChecked(checkbox, checked) {
 }
 
 function selectedInstallSkillNames() {
-  return [...document.querySelectorAll(".skill-sync-check[data-installable='true']:checked")]
+  return [...document.querySelectorAll(".skill-sync-check[data-promptable='true']:checked")]
     .map((checkbox) => checkbox.dataset.name)
     .filter(Boolean);
 }
@@ -1880,7 +1881,7 @@ $("syncTabToken").addEventListener("click", () => switchSyncTab("token"));
 $("syncTabSkill").addEventListener("click", () => {
   switchSyncTab("skill");
   if (syncServerUrl) $("skillSyncServer").value = syncServerUrl;
-  $("skillSyncCompare").click();
+  if (!skillSyncLoaded) $("skillSyncCompare").click();
 });
 
 async function loadSkillSync({ includeRemote = true, loadingText = "Loading skills…" } = {}) {
@@ -1900,6 +1901,7 @@ async function loadSkillSync({ includeRemote = true, loadingText = "Loading skil
       $("skillSyncList").innerHTML = `<div class="empty"><p>No installed, imported, or remote skills found.</p></div>`;
       $("skillSyncActions").style.display = "none";
       $("skillSyncSummary").textContent = "0 skills";
+      skillSyncLoaded = true;
       return;
     }
 
@@ -1914,13 +1916,13 @@ async function loadSkillSync({ includeRemote = true, loadingText = "Loading skil
       const canPush = Boolean(serverUrl) && (item.status === "newer" || item.status === "local-only");
       const importedCurrent = item.remote && item.imported && item.remote.sha256 === item.imported.sha256;
       const canPull = Boolean(serverUrl) && (item.status === "older" || item.status === "remote-only") && !importedCurrent;
-      const canInstall = Boolean(item.local) && item.install_status !== "installed";
+      const canPrompt = Boolean(item.local);
       if (canPush) skillSyncSelections[item.name] = "push";
       else if (canPull) skillSyncSelections[item.name] = "pull";
       else skillSyncSelections[item.name] = null;
 
       const direction = canPush ? "push" : canPull ? "pull" : null;
-      const directionLabel = canPush ? "Push ↑" : canPull ? "Pull ↓" : canInstall ? "Install" : item.status === "same" ? "Synced" : item.status.replaceAll("-", " ");
+      const displayDirectionLabel = canPush ? "Push Skill" : canPull ? "Pull" : canPrompt ? "Prompt" : item.status === "same" ? "Synced" : item.status.replaceAll("-", " ");
       const installLabel = installedAgents.length
         ? installedAgents.join(" + ")
         : item.install_status === "pending-agent-install"
@@ -1928,20 +1930,20 @@ async function loadSkillSync({ includeRemote = true, loadingText = "Loading skil
           : "Not installed";
       const title = [
         item.name,
-        `Sync: ${directionLabel}`,
+        `Sync: ${displayDirectionLabel}`,
         `Install: ${installLabel}`,
         item.local?.source_markdown ? `Local: ${item.local.source_markdown}` : null,
       ].filter(Boolean).join(" · ");
-      const enabled = Boolean(direction) || canInstall;
-      const checked = enabled;
+      const enabled = Boolean(direction) || canPrompt;
+      const checked = Boolean(direction) || (canPrompt && item.install_status !== "installed");
       return {
         actionable: enabled,
         html: `<label class="skill-sync-item${checked ? " is-selected" : " is-settled"}" title="${esc(title)}">
-          <input class="skill-sync-check" type="checkbox" data-name="${esc(item.name)}" data-dir="${direction || ""}" data-installable="${canInstall ? "true" : "false"}" ${checked ? "checked" : ""} ${enabled ? "" : "disabled"} />
+          <input class="skill-sync-check" type="checkbox" data-name="${esc(item.name)}" data-dir="${direction || ""}" data-promptable="${canPrompt ? "true" : "false"}" ${checked ? "checked" : ""} ${enabled ? "" : "disabled"} />
           <span>
             <span class="skill-sync-name">${esc(item.name)}</span>
             <span class="skill-sync-meta">
-              <span class="skill-sync-direction ${canPush ? "push" : canPull ? "import" : canInstall ? "install" : ""}">${esc(directionLabel)}</span>
+              <span class="skill-sync-direction ${canPush ? "push" : canPull ? "import" : canPrompt ? "install" : ""}">${esc(displayDirectionLabel)}</span>
               <span>·</span>
               <span>${esc(installLabel)}</span>
             </span>
@@ -1961,18 +1963,21 @@ async function loadSkillSync({ includeRemote = true, loadingText = "Loading skil
         updateSkillSyncSummary();
       });
     });
+    skillSyncLoaded = true;
   } catch (err) {
     $("skillSyncSummary").textContent = "Error: " + err.message;
   }
 }
 
 $("skillSyncCompare").addEventListener("click", () => {
+  skillSyncLoaded = false;
   loadSkillSync().catch((err) => {
     $("skillSyncSummary").textContent = "Error: " + err.message;
   });
 });
 
 $("skillInstallRefresh").addEventListener("click", () => {
+  skillSyncLoaded = false;
   loadSkillSync({ includeRemote: false, loadingText: "Checking installs…" })
     .then(() => toast("Install status refreshed", "success"))
     .catch((err) => {
@@ -1993,7 +1998,7 @@ $("skillSyncClear").addEventListener("click", () => {
 $("skillSyncCopyInstallPrompt").addEventListener("click", async () => {
   const names = selectedInstallSkillNames();
   if (!names.length) {
-    toast("Select one or more installable skills", "error");
+    toast("Select one or more local skills", "error");
     return;
   }
   $("skillSyncCopyInstallPrompt").disabled = true;
@@ -2014,7 +2019,7 @@ $("skillSyncCopyInstallPrompt").addEventListener("click", async () => {
   }
 });
 
-$("skillSyncApply").addEventListener("click", async () => {
+$("skillSyncApply")?.addEventListener("click", async () => {
   const serverUrl = $("skillSyncServer").value.trim() || syncServerUrl;
   const token = syncToken || localStorage.getItem("syncToken") || "";
   const pushNames = Object.entries(skillSyncSelections).filter(([, v]) => v === "push").map(([k]) => k);

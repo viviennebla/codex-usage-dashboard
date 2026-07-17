@@ -315,6 +315,33 @@ async function assertReadableFile(path, message) {
   }
 }
 
+function firstPathSegment(path) {
+  const parts = String(path || "").split("/").filter(Boolean);
+  return parts.length > 1 ? parts[0] : null;
+}
+
+function selectedSkillsSummary(group, localSkills) {
+  const selectedSegments = new Set(group.skills.map((skill) => firstPathSegment(skill.source_markdown)));
+  if (selectedSegments.size === 1) {
+    const [segment] = selectedSegments;
+    if (segment) {
+      const sourceSkillsInSegment = localSkills
+        .filter((skill) => skill.source_dir === group.source_dir)
+        .filter((skill) => firstPathSegment(skill.source_markdown) === segment);
+      const selectedNames = new Set(group.skills.map((skill) => skill.name.toLowerCase()));
+      const allSegmentSelected = sourceSkillsInSegment.length > 0
+        && sourceSkillsInSegment.every((skill) => selectedNames.has(skill.name.toLowerCase()))
+        && selectedNames.size === sourceSkillsInSegment.length;
+      if (allSegmentSelected) return [`Selected skills: all ${segment} skills`];
+    }
+  }
+
+  return [
+    "Selected skills:",
+    ...group.skills.map((skill) => `- ${skill.name} (${skill.source_markdown})`),
+  ];
+}
+
 export async function buildCodexSkillInstallPrompt(names = [], configDirectories = []) {
   const requested = [...new Set((Array.isArray(names) ? names : [])
     .map((name) => String(name || "").trim())
@@ -361,12 +388,19 @@ export async function buildCodexSkillInstallPrompt(names = [], configDirectories
     "",
     ...groups.flatMap((group) => [
       `Skill source bundle: ${group.expanded_source_dir}`,
-      "Selected skills:",
-      ...group.skills.map((skill) => `- ${skill.name} (${skill.source_markdown})`),
+      ...selectedSkillsSummary(group, localSkills),
       "",
     ]),
-    `Treat this as a sync/update request. If a target skill already exists, follow ${SKILL_BUNDLE_FILE} conflict/update rules; report conflicts instead of silently overwriting local modifications.`,
-    "After installation, report each selected skill as installed, updated, skipped, invalid, or conflicted.",
+    "Treat this as a sync/update request.",
+    "",
+    "If a selected skill conflicts with, functionally overlaps, or appears to replace an existing installed skill under a different name, do not silently choose a resolution. Report the suspected conflict pairs and ask me whether to keep both, skip the selected skill, replace/update the existing skill, remove the old skill and install the new one, or rename/split responsibilities.",
+    "",
+    `If an exact target skill already exists, follow ${SKILL_BUNDLE_FILE} update rules and avoid overwriting local modifications unless the bundle rules and my request explicitly allow it.`,
+    "",
+    "After installation, report:",
+    "- each selected skill as installed, updated, skipped, invalid, or conflicted;",
+    "- selected skills that remain unsynced and why;",
+    "- installed skills not managed by this selected bundle as installed-only.",
   ].join("\n").trimEnd() + "\n";
 
   return {

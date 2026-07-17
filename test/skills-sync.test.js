@@ -124,9 +124,8 @@ test("refuses to build a Codex install prompt without a configured skills source
 test("builds a Codex install prompt from a configured source bundle", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "skills-prompt-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(join(root, "common"), { recursive: true });
   await writeFile(join(root, SKILL_BUNDLE_FILE), "# Skill bundle rules\n", "utf8");
-  await writeFile(join(root, "common", "reviewer.md"), "# Reviewer\n\n## Source Metadata\n\n- Source name: `reviewer`\n- Trigger: review code\n", "utf8");
+  await writeFile(join(root, "reviewer.md"), "# Reviewer\n\n## Source Metadata\n\n- Source name: `reviewer`\n- Trigger: review code\n", "utf8");
 
   const result = await buildCodexSkillInstallPrompt(["reviewer"], [{ path: root, type: "skills" }]);
 
@@ -134,8 +133,25 @@ test("builds a Codex install prompt from a configured source bundle", async (t) 
   assert.deepEqual(result.skills, ["reviewer"]);
   assert.match(result.prompt, /Target runtime: Codex/);
   assert.match(result.prompt, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(result.prompt, /- reviewer \(common\/reviewer\.md\)/);
+  assert.match(result.prompt, /- reviewer \(reviewer\.md\)/);
   assert.match(result.prompt, /read SKILL_BUNDLE\.md first/);
+  assert.match(result.prompt, /functionally overlaps/);
+  assert.match(result.prompt, /installed-only/);
+});
+
+test("summarizes all common skills in the Codex install prompt", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "skills-prompt-common-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "common"), { recursive: true });
+  await writeFile(join(root, SKILL_BUNDLE_FILE), "# Skill bundle rules\n", "utf8");
+  await writeFile(join(root, "common", "reviewer.md"), "# Reviewer\n", "utf8");
+  await writeFile(join(root, "common", "investigator.md"), "# Investigator\n", "utf8");
+
+  const result = await buildCodexSkillInstallPrompt(["reviewer", "investigator"], [{ path: root, type: "skills" }]);
+
+  assert.match(result.prompt, /Selected skills: all common skills/);
+  assert.doesNotMatch(result.prompt, /- reviewer \(common\/reviewer\.md\)/);
+  assert.match(result.prompt, /selected skills that remain unsynced and why/);
 });
 
 test("skill bundle snapshots include manager rules and omit local junk", async (t) => {
