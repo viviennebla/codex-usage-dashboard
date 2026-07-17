@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative } from "node:path";
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { resolveClaudeRoots, resolveCodexHomes } from "./sources.js";
 
 const IMPORT_DIR = "imported-skills";
 const IMPORT_MANIFEST = "index.json";
+const STORED_BUNDLE_FILE = "skills-bundle.json";
+export const SKILL_BUNDLE_FILE = "SKILL_BUNDLE.md";
 
 function expandHome(path) {
   if (path.startsWith("~")) return join(homedir(), path.slice(1));
@@ -29,7 +31,9 @@ function safeMarkdownFileName(name) {
   return `${stem}.md`;
 }
 
-const NON_SKILL_MARKDOWN = new Set(["agents.md", "readme.md", "changelog.md", "license.md"]);
+const NON_SKILL_MARKDOWN = new Set(["agents.md", "skill_bundle.md", "readme.md", "changelog.md", "license.md"]);
+const BUNDLE_IGNORED_NAMES = new Set([".DS_Store"]);
+const BUNDLE_IGNORED_DIRS = new Set([".git", "node_modules"]);
 
 function isSkillMarkdown(filename) {
   const lower = filename.toLowerCase();
@@ -41,6 +45,29 @@ function isSkillMarkdown(filename) {
 
 function skillNameFromFile(filename) {
   return basename(filename, extname(filename));
+}
+
+function safeBundlePath(path) {
+  const normalized = String(path || "").replace(/\\/g, "/");
+  if (!normalized || normalized.startsWith("/") || normalized.split("/").some((part) => part === ".." || part === "")) {
+    throw new Error(`Unsafe bundle path: ${path}`);
+  }
+  return normalized;
+}
+
+function shouldIgnoreBundleEntry(entryName) {
+  return BUNDLE_IGNORED_NAMES.has(entryName);
+}
+
+function bundleHash(files = []) {
+  const hash = createHash("sha256");
+  for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
+    hash.update(file.path);
+    hash.update("\0");
+    hash.update(file.sha256 || sha256(file.content || ""));
+    hash.update("\0");
+  }
+  return hash.digest("hex").slice(0, 16);
 }
 
 /** Convert a legacy file map into one portable Markdown document. */
@@ -131,6 +158,223 @@ export async function scanAllSkillDirs(configDirectories = []) {
     seen.add(key);
     return true;
   });
+}
+
+export async function scanSkillBundleDir(dirPath) {
+  const expanded = expandHome(dirPath);
+  if (!(await isDirectory(expanded))) throw new Error(`Skill source directory not found: ${dirPath}`);
+
+  const files = [];
+  async function collect(directory) {
+    const entries = (await readdir(directory, { withFileTypes: true }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (shouldIgnoreBundleEntry(entry.name)) continue;
+      const fullPath = join(directory, entry.name);
+      const relPath = relative(expanded, fullPath).replace(/\\/g, "/");
+      if (entry.isDirectory()) {
+        if (BUNDLE_IGNORED_DIRS.has(entry.name)) continue;
+        await collect(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const content = await readFile(fullPath, "utf8");
+      const file = {
+        path: safeBundlePath(relPath),
+        content: content.trimEnd() + "\n",
+        last_modified: (await stat(fullPath)).mtime.toISOString(),
+      };
+      file.sha256 = sha256(file.content);
+      files.push(file);
+    }
+  }
+
+  await collect(expanded);
+  const skills = await scanSkillDir(expanded);
+  return {
+    version: 1,
+    source_dir: dirPath,
+    generated_at: new Date().toISOString(),
+    file_count: files.length,
+    sha256: bundleHash(files),
+    files,
+    skills,
+  };
+}
+
+export async function scanAllSkillBundles(configDirectories = []) {
+  const bundles = [];
+  for (const directory of configSkillDirs(configDirectories)) {
+    bundles.push(await scanSkillBundleDir(directory.path));
+  }
+  return bundles;
+}
+
+function getSingleSkillSourceDir(configDirectories = [], names = [], localSkills = []) {
+  const skillDirs = configSkillDirs(configDirectories);
+  if (!skillDirs.length) throw new Error("No skill source directory is configured");
+  if (!names.length) {
+    if (skillDirs.length > 1) throw new Error("Multiple skill source directories are configured; select skills from one source");
+    return skillDirs[0].path;
+  }
+  const localMap = new Map(localSkills.map((skill) => [skill.name.toLowerCase(), skill]));
+  const sourceDirs = new Set();
+  for (const name of names) {
+    const skill = localMap.get(String(name).toLowerCase());
+    if (!skill) throw new Error(`Skill source file not found: ${name}`);
+    sourceDirs.add(skill.source_dir);
+  }
+  if (sourceDirs.size !== 1) throw new Error("Selected skills span multiple skill source directories");
+  return [...sourceDirs][0];
+}
+
+export async function scanSelectedSkillBundle(names = [], configDirectories = []) {
+  const requested = [...new Set((Array.isArray(names) ? names : [])
+    .map((name) => String(name || "").trim())
+    .filter(Boolean))];
+  const localSkills = await scanAllSkillDirs(configDirectories);
+  const sourceDir = getSingleSkillSourceDir(configDirectories, requested, localSkills);
+  return scanSkillBundleDir(sourceDir);
+}
+
+export async function writeStoredSkillBundle(bundle, stateDir = "state") {
+  if (!bundle?.files || !Array.isArray(bundle.files)) throw new Error("Invalid skill bundle payload");
+  const normalized = {
+    version: 1,
+    generated_at: bundle.generated_at || new Date().toISOString(),
+    source_dir: bundle.source_dir || null,
+    sha256: bundle.sha256 || bundleHash(bundle.files),
+    file_count: bundle.files.length,
+    skills: Array.isArray(bundle.skills) ? bundle.skills : [],
+    files: bundle.files.map((file) => ({
+      path: safeBundlePath(file.path),
+      content: String(file.content ?? "").trimEnd() + "\n",
+      sha256: file.sha256 || sha256(String(file.content ?? "").trimEnd() + "\n"),
+      last_modified: file.last_modified || null,
+    })).sort((a, b) => a.path.localeCompare(b.path)),
+  };
+  await mkdir(stateDir, { recursive: true });
+  const path = join(stateDir, STORED_BUNDLE_FILE);
+  const tempPath = `${path}.tmp`;
+  await writeFile(tempPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+  await rename(tempPath, path);
+  return normalized;
+}
+
+export async function readStoredSkillBundle(stateDir = "state") {
+  try {
+    const parsed = JSON.parse(await readFile(join(stateDir, STORED_BUNDLE_FILE), "utf8"));
+    return parsed?.files && Array.isArray(parsed.files) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function applySkillBundleToDir(bundle, dirPath) {
+  if (!bundle?.files || !Array.isArray(bundle.files)) throw new Error("Invalid skill bundle payload");
+  const expanded = expandHome(dirPath);
+  await mkdir(expanded, { recursive: true });
+  const incomingPaths = new Set(bundle.files.map((file) => safeBundlePath(file.path)));
+
+  async function removeOrphans(directory) {
+    const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (shouldIgnoreBundleEntry(entry.name)) continue;
+      const fullPath = join(directory, entry.name);
+      const relPath = relative(expanded, fullPath).replace(/\\/g, "/");
+      if (entry.isDirectory()) {
+        if (BUNDLE_IGNORED_DIRS.has(entry.name)) continue;
+        await removeOrphans(fullPath);
+        continue;
+      }
+      if (entry.isFile() && !incomingPaths.has(relPath)) await rm(fullPath, { force: true });
+    }
+  }
+
+  await removeOrphans(expanded);
+  for (const file of bundle.files) {
+    const relPath = safeBundlePath(file.path);
+    const destination = join(expanded, relPath);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, String(file.content ?? "").trimEnd() + "\n", "utf8");
+  }
+  return scanSkillBundleDir(dirPath);
+}
+
+function configSkillDirs(configDirectories = []) {
+  return configDirectories.filter((item) => item.type === "skills");
+}
+
+async function assertReadableFile(path, message) {
+  try {
+    const info = await stat(path);
+    if (!info.isFile()) throw new Error(message);
+    await readFile(path, "utf8");
+  } catch {
+    throw new Error(message);
+  }
+}
+
+export async function buildCodexSkillInstallPrompt(names = [], configDirectories = []) {
+  const requested = [...new Set((Array.isArray(names) ? names : [])
+    .map((name) => String(name || "").trim())
+    .filter(Boolean))];
+  if (!requested.length) throw new Error("No skill names selected");
+
+  const skillDirs = configSkillDirs(configDirectories);
+  if (!skillDirs.length) throw new Error("No skill source directory is configured");
+
+  const localSkills = await scanAllSkillDirs(configDirectories);
+  const localMap = new Map(localSkills.map((skill) => [skill.name.toLowerCase(), skill]));
+  const missing = requested.filter((name) => !localMap.has(name.toLowerCase()));
+  if (missing.length) throw new Error(`Skill source file not found: ${missing.join(", ")}`);
+
+  const selected = requested.map((name) => localMap.get(name.toLowerCase()));
+  const bySource = new Map();
+  for (const skill of selected) {
+    const sourceDir = skill.source_dir;
+    const expandedSourceDir = expandHome(sourceDir);
+    if (!skill.source_markdown) throw new Error(`Missing source Markdown path for ${skill.name}`);
+    await assertReadableFile(join(expandedSourceDir, SKILL_BUNDLE_FILE), `${SKILL_BUNDLE_FILE} not found in skill source directory: ${sourceDir}`);
+    await assertReadableFile(join(expandedSourceDir, skill.source_markdown), `Source Markdown not found for ${skill.name}: ${skill.source_markdown}`);
+
+    const group = bySource.get(sourceDir) || {
+      source_dir: sourceDir,
+      expanded_source_dir: expandedSourceDir,
+      skills: [],
+    };
+    group.skills.push({
+      name: skill.name,
+      source_markdown: skill.source_markdown,
+    });
+    bySource.set(sourceDir, group);
+  }
+
+  const groups = [...bySource.values()].sort((a, b) => a.expanded_source_dir.localeCompare(b.expanded_source_dir));
+  for (const group of groups) group.skills.sort((a, b) => a.name.localeCompare(b.name));
+
+  const prompt = [
+    "Target runtime: Codex",
+    "",
+    "Install the selected skills from the configured dashboard skill source bundle(s).",
+    `For each bundle, read ${SKILL_BUNDLE_FILE} first, then follow its Codex Skill Package Rules to generate, validate, and install the selected skills.`,
+    "",
+    ...groups.flatMap((group) => [
+      `Skill source bundle: ${group.expanded_source_dir}`,
+      "Selected skills:",
+      ...group.skills.map((skill) => `- ${skill.name} (${skill.source_markdown})`),
+      "",
+    ]),
+    `Treat this as a sync/update request. If a target skill already exists, follow ${SKILL_BUNDLE_FILE} conflict/update rules; report conflicts instead of silently overwriting local modifications.`,
+    "After installation, report each selected skill as installed, updated, skipped, invalid, or conflicted.",
+  ].join("\n").trimEnd() + "\n";
+
+  return {
+    target_runtime: "codex",
+    source_bundles: groups,
+    skills: selected.map((skill) => skill.name),
+    prompt,
+  };
 }
 
 export async function scanAgentSkillRoot(skillsRoot, agent) {

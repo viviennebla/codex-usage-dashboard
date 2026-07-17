@@ -381,6 +381,7 @@ body {
 
 .skill-sync-direction.push { color: var(--accent); }
 .skill-sync-direction.import { color: var(--warn); }
+.skill-sync-direction.install { color: #38bdf8; }
 
 .skill-sync-actions {
   align-items: center;

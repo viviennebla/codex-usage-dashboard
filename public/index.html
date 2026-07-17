@@ -91,12 +91,14 @@
         <div id="syncContentSkill" style="display:none">
           <div style="display:flex;gap:8px;margin-bottom:12px">
             <button id="skillSyncCompare" class="btn">Refresh Skills</button>
+            <button id="skillInstallRefresh" class="btn" title="Rescan local agent skill installations">Check installs</button>
             <input id="skillSyncServer" placeholder="http://your-server:34777" style="flex:1;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
           </div>
           <div id="skillSyncList"></div>
           <div id="skillSyncActions" class="skill-sync-actions" style="display:none">
             <button id="skillSyncSelectAll" class="btn">Select pending</button>
             <button id="skillSyncClear" class="btn">Clear</button>
+            <button id="skillSyncCopyInstallPrompt" class="btn" title="Copy a prompt for your Codex agent to install selected skills">Copy install prompt</button>
             <button id="skillSyncApply" class="btn" style="background:#22c55e;color:#0b1120;border-color:#22c55e;font-weight:600">Apply Selected</button>
             <span id="skillSyncSummary" class="skill-sync-summary"></span>
           </div>

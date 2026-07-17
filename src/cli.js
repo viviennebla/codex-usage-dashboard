@@ -712,12 +712,61 @@ function startWeb(options) {
 
       // ── GET /api/skills/local ── scan registered skill directories
       if (req.method === "GET" && url.pathname === "/api/skills/local") {
-        const { scanAllSkillDirs, scanAgentInstallations } = await import("./skills-sync.js");
+        const { scanAllSkillDirs, scanAgentInstallations, scanAllSkillBundles } = await import("./skills-sync.js");
         const cfg = await readConfig();
         const skills = await scanAllSkillDirs(cfg.directories || []);
+        const bundles = await scanAllSkillBundles(cfg.directories || []);
         const installations = await scanAgentInstallations(cfg.directories || [], options);
-        sendJson(res, 200, { skills, installations });
+        sendJson(res, 200, { skills, bundles, installations });
         return;
+      }
+
+      // ── GET /api/skills ── expose the current skill list for sync peers
+      if (req.method === "GET" && url.pathname === "/api/skills") {
+        const { readStoredSkillBundle, scanAllSkillDirs } = await import("./skills-sync.js");
+        const cfg = await readConfig();
+        const localSkills = await scanAllSkillDirs(cfg.directories || []);
+        if (localSkills.length) {
+          sendJson(res, 200, localSkills);
+          return;
+        }
+        const storedBundle = await readStoredSkillBundle(stateDir);
+        sendJson(res, 200, storedBundle?.skills || []);
+        return;
+      }
+
+      // ── GET/POST /api/skills/bundle ── sync the complete source bundle directory
+      if (url.pathname === "/api/skills/bundle") {
+        const { readStoredSkillBundle, scanAllSkillBundles, writeStoredSkillBundle } = await import("./skills-sync.js");
+        if (req.method === "GET") {
+          const cfg = await readConfig();
+          const bundles = await scanAllSkillBundles(cfg.directories || []);
+          if (bundles.length) {
+            sendJson(res, 200, bundles[0]);
+            return;
+          }
+          const storedBundle = await readStoredSkillBundle(stateDir);
+          if (!storedBundle) {
+            sendError(res, 404, "No skill bundle is available");
+            return;
+          }
+          sendJson(res, 200, storedBundle);
+          return;
+        }
+        if (req.method === "POST") {
+          if (!checkAuth(req, token)) {
+            sendError(res, 401, "Unauthorized");
+            return;
+          }
+          const body = await readRequestBody(req);
+          try {
+            const stored = await writeStoredSkillBundle(body?.bundle || body, stateDir);
+            sendJson(res, 200, { ok: true, sha256: stored.sha256, file_count: stored.file_count, skills_count: stored.skills?.length || 0 });
+          } catch (error) {
+            sendError(res, 400, error?.message || "Invalid skill bundle");
+          }
+          return;
+        }
       }
 
       // ── GET /api/skills/imported ── list Markdown staged for Agent installation
@@ -731,20 +780,35 @@ function startWeb(options) {
       if (req.method === "POST" && url.pathname === "/api/skills/compare") {
         const body = await readRequestBody(req);
         const serverUrl = body?.server;
-        if (!serverUrl) { sendError(res, 400, "Missing server"); return; }
         const { scanAllSkillDirs, compareSkills, readImportedSkills, scanAgentInstallations } = await import("./skills-sync.js");
         const cfg = await readConfig();
         const localSkills = await scanAllSkillDirs(cfg.directories || []);
         const importedSkills = await readImportedSkills(stateDir);
         const installations = await scanAgentInstallations(cfg.directories || [], options);
-        const remoteUrl = String(serverUrl).replace(/\/+$/, "");
         let remoteSkills = [];
-        try {
-          const resp = await fetch(`${remoteUrl}/api/skills`);
-          if (resp.ok) remoteSkills = await resp.json();
-        } catch { /* server unreachable → all local-only */ }
+        if (serverUrl) {
+          const remoteUrl = String(serverUrl).replace(/\/+$/, "");
+          try {
+            const resp = await fetch(`${remoteUrl}/api/skills`);
+            if (resp.ok) remoteSkills = await resp.json();
+          } catch { /* server unreachable → all local-only */ }
+        }
         const comparison = compareSkills(localSkills, remoteSkills, importedSkills, installations);
         sendJson(res, 200, { local: localSkills, remote: remoteSkills, imported: importedSkills, installations, comparison });
+        return;
+      }
+
+      // ── POST /api/skills/install-prompt ── generate a prompt for the user's Agent
+      if (req.method === "POST" && url.pathname === "/api/skills/install-prompt") {
+        const body = await readRequestBody(req);
+        const names = body?.names || [];
+        const cfg = await readConfig();
+        const { buildCodexSkillInstallPrompt } = await import("./skills-sync.js");
+        try {
+          sendJson(res, 200, await buildCodexSkillInstallPrompt(names, cfg.directories || []));
+        } catch (error) {
+          sendError(res, 400, error?.message || "Cannot build install prompt");
+        }
         return;
       }
 
@@ -755,52 +819,69 @@ function startWeb(options) {
         const names = body?.names || [];
         const token = body?.token || null;
         if (!serverUrl || !names.length) { sendError(res, 400, "Missing server or names"); return; }
-        const { scanAllSkillDirs } = await import("./skills-sync.js");
+        const { scanSelectedSkillBundle } = await import("./skills-sync.js");
         const cfg = await readConfig();
-        const localSkills = await scanAllSkillDirs(cfg.directories || []);
-        const localMap = new Map(localSkills.map((s) => [s.name, s]));
         const remoteUrl = String(serverUrl).replace(/\/+$/, "");
         const results = [];
         const headers = { "content-type": "application/json" };
         if (token) headers.authorization = `Bearer ${token}`;
-        for (const name of names) {
-          const skill = localMap.get(name);
-          if (!skill) { results.push({ name, ok: false, error: "Not found locally" }); continue; }
-          try {
-            const resp = await fetch(`${remoteUrl}/api/skills`, {
-              method: "POST", headers,
-              body: JSON.stringify({ name: skill.name, markdown: skill.markdown, last_modified: skill.last_modified, sha256: skill.sha256, device_id: hostname() }),
-            });
-            results.push({ name, ok: resp.ok });
-          } catch (err) { results.push({ name, ok: false, error: err.message }); }
+        try {
+          const bundle = await scanSelectedSkillBundle(names, cfg.directories || []);
+          const resp = await fetch(`${remoteUrl}/api/skills/bundle`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ bundle, device_id: hostname() }),
+          });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+          const data = await resp.json();
+          for (const name of names) results.push({ name, ok: true, bundle_sha256: data.sha256 });
+          sendJson(res, 200, { results, bundle: { sha256: bundle.sha256, file_count: bundle.file_count, skills_count: bundle.skills.length } });
+        } catch (err) {
+          for (const name of names) results.push({ name, ok: false, error: err.message });
+          sendJson(res, 200, { results });
         }
-        sendJson(res, 200, { results });
         return;
       }
 
-      // ── POST /api/skills/pull ── import selected Markdown for later Agent installation
+      // ── POST /api/skills/pull ── pull the complete source bundle directory
       if (req.method === "POST" && url.pathname === "/api/skills/pull") {
         const body = await readRequestBody(req);
         const serverUrl = body?.server;
         const names = body?.names || [];
         if (!serverUrl || !names.length) { sendError(res, 400, "Missing server or names"); return; }
-        const { importSkillMarkdown } = await import("./skills-sync.js");
+        const { applySkillBundleToDir, scanAllSkillDirs } = await import("./skills-sync.js");
+        const cfg = await readConfig();
+        const localSkills = await scanAllSkillDirs(cfg.directories || []);
+        const localMap = new Map(localSkills.map((skill) => [skill.name.toLowerCase(), skill]));
+        const sourceDirs = new Set(names.map((name) => localMap.get(String(name).toLowerCase())?.source_dir).filter(Boolean));
+        const targetDir = sourceDirs.size === 1
+          ? [...sourceDirs][0]
+          : (cfg.directories || []).find((dir) => dir.type === "skills")?.path;
+        if (!targetDir) {
+          sendError(res, 400, "No skill source directory is configured");
+          return;
+        }
         const remoteUrl = String(serverUrl).replace(/\/+$/, "");
         const results = [];
-        for (const name of names) {
-          try {
-            const resp = await fetch(`${remoteUrl}/api/skills/${encodeURIComponent(name)}`);
-            if (!resp.ok) { results.push({ name, ok: false, error: `HTTP ${resp.status}` }); continue; }
-            const skill = await resp.json();
-            const imported = await importSkillMarkdown(skill, stateDir, remoteUrl);
-            results.push({ name, ok: true, imported });
-          } catch (err) { results.push({ name, ok: false, error: err.message }); }
+        try {
+          const resp = await fetch(`${remoteUrl}/api/skills/bundle`);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+          const bundle = await resp.json();
+          const applied = await applySkillBundleToDir(bundle, targetDir);
+          for (const name of names) results.push({ name, ok: true, bundle_sha256: applied.sha256 });
+          sendJson(res, 200, { results, bundle: { sha256: applied.sha256, file_count: applied.file_count, skills_count: applied.skills.length } });
+        } catch (err) {
+          for (const name of names) results.push({ name, ok: false, error: err.message });
+          sendJson(res, 200, { results });
         }
-        sendJson(res, 200, { results });
         return;
       }
 
       // ── Static files ──
+      if (url.pathname.startsWith("/api/")) {
+        sendError(res, 404, `Unknown API endpoint: ${url.pathname}`);
+        return;
+      }
       const response = await serveStatic(url.pathname);
       res.writeHead(response.status, { "content-type": response.type });
       res.end(response.body);
