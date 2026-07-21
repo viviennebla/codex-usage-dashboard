@@ -812,13 +812,13 @@ function startWeb(options) {
         return;
       }
 
-      // ── POST /api/skills/push ── push selected skills to remote
+      // ── POST /api/skills/push ── push the complete local skill source bundle to remote
       if (req.method === "POST" && url.pathname === "/api/skills/push") {
         const body = await readRequestBody(req);
         const serverUrl = body?.server;
         const names = body?.names || [];
         const token = body?.token || null;
-        if (!serverUrl || !names.length) { sendError(res, 400, "Missing server or names"); return; }
+        if (!serverUrl) { sendError(res, 400, "Missing server"); return; }
         const { scanSelectedSkillBundle } = await import("./skills-sync.js");
         const cfg = await readConfig();
         const remoteUrl = String(serverUrl).replace(/\/+$/, "");
@@ -834,22 +834,23 @@ function startWeb(options) {
           });
           if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
           const data = await resp.json();
-          for (const name of names) results.push({ name, ok: true, bundle_sha256: data.sha256 });
-          sendJson(res, 200, { results, bundle: { sha256: bundle.sha256, file_count: bundle.file_count, skills_count: bundle.skills.length } });
+          for (const name of (names.length ? names : bundle.skills.map((skill) => skill.name))) results.push({ name, ok: true, bundle_sha256: data.sha256 });
+          sendJson(res, 200, { ok: true, results, bundle: { sha256: bundle.sha256, file_count: bundle.file_count, skills_count: bundle.skills.length } });
         } catch (err) {
           for (const name of names) results.push({ name, ok: false, error: err.message });
-          sendJson(res, 200, { results });
+          sendJson(res, 200, { ok: false, results, error: err.message });
         }
         return;
       }
 
-      // ── POST /api/skills/pull ── pull the complete source bundle directory
-      if (req.method === "POST" && url.pathname === "/api/skills/pull") {
+      // ── POST /api/skills/pull-preview|pull ── preview or pull the complete remote skill source bundle
+      if (req.method === "POST" && (url.pathname === "/api/skills/pull" || url.pathname === "/api/skills/pull-preview")) {
         const body = await readRequestBody(req);
         const serverUrl = body?.server;
         const names = body?.names || [];
-        if (!serverUrl || !names.length) { sendError(res, 400, "Missing server or names"); return; }
-        const { applySkillBundleToDir, scanAllSkillDirs } = await import("./skills-sync.js");
+        const strategy = body?.strategy === "merge" ? "merge" : "overwrite";
+        if (!serverUrl) { sendError(res, 400, "Missing server"); return; }
+        const { applySkillBundleToDir, planSkillBundleApply, scanAllSkillDirs } = await import("./skills-sync.js");
         const cfg = await readConfig();
         const localSkills = await scanAllSkillDirs(cfg.directories || []);
         const localMap = new Map(localSkills.map((skill) => [skill.name.toLowerCase(), skill]));
@@ -867,12 +868,17 @@ function startWeb(options) {
           const resp = await fetch(`${remoteUrl}/api/skills/bundle`);
           if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
           const bundle = await resp.json();
-          const applied = await applySkillBundleToDir(bundle, targetDir);
-          for (const name of names) results.push({ name, ok: true, bundle_sha256: applied.sha256 });
-          sendJson(res, 200, { results, bundle: { sha256: applied.sha256, file_count: applied.file_count, skills_count: applied.skills.length } });
+          const plan = await planSkillBundleApply(bundle, targetDir, { strategy });
+          if (url.pathname === "/api/skills/pull-preview") {
+            sendJson(res, 200, { plan, bundle: { sha256: plan.bundle_sha256, file_count: plan.file_count, skills_count: plan.skills_count } });
+            return;
+          }
+          const applied = await applySkillBundleToDir(bundle, targetDir, { strategy });
+          for (const name of (names.length ? names : (bundle.skills || []).map((skill) => skill.name))) results.push({ name, ok: true, bundle_sha256: applied.sha256 });
+          sendJson(res, 200, { ok: true, results, plan, bundle: { sha256: applied.sha256, file_count: applied.file_count, skills_count: applied.skills.length } });
         } catch (err) {
           for (const name of names) results.push({ name, ok: false, error: err.message });
-          sendJson(res, 200, { results });
+          sendJson(res, 200, { ok: false, results, error: err.message });
         }
         return;
       }

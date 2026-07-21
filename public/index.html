@@ -62,8 +62,8 @@
         <div class="panel-head">
           <h2>Sync</h2>
           <div style="display:flex;gap:2px">
-            <button id="syncTabToken" class="sync-tab active" style="font-size:12px;padding:4px 12px;border-radius:6px 6px 0 0;border:1px solid #334155;border-bottom:none;background:#1e293b;color:#e2e8f0;cursor:pointer">Data Sync</button>
-            <button id="syncTabSkill" class="sync-tab" style="font-size:12px;padding:4px 12px;border-radius:6px 6px 0 0;border:1px solid transparent;border-bottom:none;background:transparent;color:#64748b;cursor:pointer">Skill Sync</button>
+            <button id="syncTabToken" class="sync-tab active" style="font-size:12px;padding:4px 12px;border-radius:6px 6px 0 0;border:1px solid #334155;border-bottom:none;background:#1e293b;color:#e2e8f0;cursor:pointer">Usage Data</button>
+            <button id="syncTabSkill" class="sync-tab" style="font-size:12px;padding:4px 12px;border-radius:6px 6px 0 0;border:1px solid transparent;border-bottom:none;background:transparent;color:#64748b;cursor:pointer">Skill Bundles</button>
           </div>
         </div>
         <!-- Data Sync content -->
@@ -77,8 +77,8 @@
             <span id="syncConnStatus" style="font-size:11px;color:#64748b"></span>
           </div>
           <div style="display:flex;gap:8px;margin-bottom:6px">
-            <button id="syncPush" class="btn" style="flex:1">▲ Push Local → Server</button>
-            <button id="syncPull" class="btn" style="flex:1">▼ Pull Server → Local</button>
+            <button id="syncPush" class="btn" title="Push usage snapshots only. Skill bundles are synced in Skill Bundles." style="flex:1">▲ Push Usage Data</button>
+            <button id="syncPull" class="btn" title="Pull usage snapshots only. Skill bundles are synced in Skill Bundles." style="flex:1">▼ Pull Usage Data</button>
           </div>
           <div style="font-size:11px;color:#64748b;font-family:monospace;margin-bottom:12px">
             <span id="syncLastPush"></span>
@@ -90,16 +90,21 @@
         <!-- Skill Sync content -->
         <div id="syncContentSkill" style="display:none">
           <div style="display:flex;gap:8px;margin-bottom:12px">
-            <button id="skillSyncCompare" class="btn">Refresh Skills</button>
+            <button id="skillSyncCompare" class="btn">Refresh Skill Bundles</button>
             <button id="skillInstallRefresh" class="btn" title="Rescan local agent skill installations">Check installs</button>
+            <select id="skillSyncStrategy" title="How pulled skill bundles are applied locally" style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 8px;color:#e2e8f0;font:12px 'Fira Code',monospace">
+              <option value="overwrite">Overwrite</option>
+              <option value="merge">Merge</option>
+            </select>
             <input id="skillSyncServer" placeholder="http://your-server:34777" style="flex:1;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font:12px 'Fira Code',monospace" />
           </div>
           <div id="skillSyncList"></div>
           <div id="skillSyncActions" class="skill-sync-actions" style="display:none">
-            <button id="skillSyncSelectAll" class="btn">Select available</button>
-            <button id="skillSyncClear" class="btn">Clear</button>
-            <button id="skillSyncCopyInstallPrompt" class="btn" title="Copy a prompt for your Codex agent to install selected skills">Copy install prompt</button>
-            <button id="skillSyncApply" class="btn" style="background:#22c55e;color:#0b1120;border-color:#22c55e;font-weight:600">Apply Selected</button>
+            <button id="skillSyncPush" class="btn" title="Push the complete local skill source bundle to the server">▲ Push Local Bundle</button>
+            <button id="skillSyncPull" class="btn" title="Preview and pull the complete remote skill bundle into the local source directory">▼ Pull Remote Bundle</button>
+            <button id="skillSyncSelectAll" class="btn">Select Install Prompts</button>
+            <button id="skillSyncClear" class="btn">Clear Prompt Selection</button>
+            <button id="skillSyncCopyInstallPrompt" class="btn" title="Copy a prompt for your Codex agent to install selected skills">Copy Install Prompt</button>
             <span id="skillSyncSummary" class="skill-sync-summary"></span>
           </div>
         </div>

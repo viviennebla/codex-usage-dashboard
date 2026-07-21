@@ -1498,14 +1498,14 @@ async function updateSyncTimes() {
     if (!res.ok) return;
     const state = await res.json();
     $("syncLastPush").textContent = state.lastPushAt
-      ? `Last push: ${fmtCompactTime(state.lastPushAt)}`
-      : "Never pushed";
+      ? `Last usage push: ${fmtCompactTime(state.lastPushAt)}`
+      : "Never pushed usage data";
     $("syncLastPull").textContent = state.lastPullAt
-      ? `Last pull: ${fmtCompactTime(state.lastPullAt)}`
-      : "Never pulled";
+      ? `Last usage pull: ${fmtCompactTime(state.lastPullAt)}`
+      : "Never pulled usage data";
     const statusParts = [];
-    if (state.lastPushStatus) statusParts.push(`push: ${state.lastPushStatus}`);
-    if (state.lastPullStatus) statusParts.push(`pull: ${state.lastPullStatus}`);
+    if (state.lastPushStatus) statusParts.push(`usage push: ${state.lastPushStatus}`);
+    if (state.lastPullStatus) statusParts.push(`usage pull: ${state.lastPullStatus}`);
     const message = state.lastError || state.lastPullError || state.lastPushError || state.lastMessage || "";
     $("syncStatus").textContent = [statusParts.join(" · "), message].filter(Boolean).join(" — ");
     $("syncStatus").style.color = state.lastError || state.lastPullError || state.lastPushError
@@ -1545,7 +1545,7 @@ $("syncSave").addEventListener("click", async () => {
 
 $("syncPush").addEventListener("click", async () => {
   if (!syncServerUrl) { toast("Save server first", "error"); return; }
-  $("syncStatus").textContent = "Pushing…";
+  $("syncStatus").textContent = "Pushing usage data…";
   $("syncStatus").style.color = "#64748b";
   try {
     const res = await fetch("/api/push-to-remote", {
@@ -1555,21 +1555,21 @@ $("syncPush").addEventListener("click", async () => {
     });
     if (!res.ok) throw new Error(await res.text());
     const result = await res.json();
-    $("syncStatus").textContent = `Push OK: ${result.device_id || "local device"}`;
+    $("syncStatus").textContent = `Usage data push OK: ${result.device_id || "local device"}`;
     $("syncStatus").style.color = "#22c55e";
     updateSyncTimes();
-    toast("Push successful ✓", "success");
+    toast("Usage data pushed", "success");
   } catch (err) {
-    $("syncStatus").textContent = "Push failed: " + err.message;
+    $("syncStatus").textContent = "Usage data push failed: " + err.message;
     $("syncStatus").style.color = "#ef4444";
-    toast("Push failed: " + err.message, "error");
+    toast("Usage data push failed: " + err.message, "error");
     updateSyncTimes();
   }
 });
 
 $("syncPull").addEventListener("click", async () => {
   if (!syncServerUrl) { toast("Save server first", "error"); return; }
-  $("syncStatus").textContent = "Pulling…";
+  $("syncStatus").textContent = "Pulling usage data…";
   $("syncStatus").style.color = "#64748b";
   try {
     const res = await fetch("/api/sync", {
@@ -1586,9 +1586,9 @@ $("syncPull").addEventListener("click", async () => {
     await refresh();
     toast(failures ? "Pull completed with failures" : result.message, failures ? "error" : "success");
   } catch (err) {
-    $("syncStatus").textContent = "Pull failed: " + err.message;
+    $("syncStatus").textContent = "Usage data pull failed: " + err.message;
     $("syncStatus").style.color = "#ef4444";
-    toast("Pull failed: " + err.message, "error");
+    toast("Usage data pull failed: " + err.message, "error");
     updateSyncTimes();
   }
 });
@@ -1817,25 +1817,29 @@ async function removeSource(path, type) {
 
 /* ── Skill Sync Panel ────────────────────── */
 
-let skillSyncSelections = {}; // name -> "push" | "pull" | null
+let skillSyncSelections = {}; // name -> "prompt" | null
 let skillSyncTotal = 0;
 let skillSyncLoaded = false;
+let skillSyncPushCount = 0;
+let skillSyncPullCount = 0;
+let skillSyncHasLocalBundle = false;
+let skillSyncHasRemoteBundle = false;
 
 function updateSkillSyncSummary() {
-  const pushCount = Object.values(skillSyncSelections).filter((value) => value === "push").length;
-  const pullCount = Object.values(skillSyncSelections).filter((value) => value === "pull").length;
   const promptCount = document.querySelectorAll(".skill-sync-check[data-promptable='true']:checked").length;
   const copyButton = $("skillSyncCopyInstallPrompt");
   if (copyButton) copyButton.disabled = promptCount === 0;
-  const applyButton = $("skillSyncApply");
-  if (applyButton) applyButton.disabled = pushCount + pullCount === 0;
-  $("skillSyncSummary").textContent = `${skillSyncTotal} skills · ${pushCount} push · ${pullCount} pull · ${promptCount} prompt selected`;
+  const pushButton = $("skillSyncPush");
+  if (pushButton) pushButton.disabled = !skillSyncHasLocalBundle;
+  const pullButton = $("skillSyncPull");
+  if (pullButton) pullButton.disabled = !skillSyncHasRemoteBundle;
+  $("skillSyncSummary").textContent = `${skillSyncTotal} skills · ${skillSyncPushCount} local changes · ${skillSyncPullCount} remote changes · ${promptCount} install prompt`;
 }
 
 function setSkillSyncChecked(checkbox, checked) {
   if (checkbox.disabled) return;
   checkbox.checked = checked;
-  skillSyncSelections[checkbox.dataset.name] = checked ? (checkbox.dataset.dir || null) : null;
+  skillSyncSelections[checkbox.dataset.name] = checked ? "prompt" : null;
   checkbox.closest(".skill-sync-item")?.classList.toggle("is-selected", checked);
 }
 
@@ -1843,6 +1847,32 @@ function selectedInstallSkillNames() {
   return [...document.querySelectorAll(".skill-sync-check[data-promptable='true']:checked")]
     .map((checkbox) => checkbox.dataset.name)
     .filter(Boolean);
+}
+
+function setSkillSyncBusy(busy) {
+  ["skillSyncPush", "skillSyncPull", "skillSyncCopyInstallPrompt", "skillSyncSelectAll", "skillSyncClear"].forEach((id) => {
+    const button = $(id);
+    if (button) button.disabled = busy;
+  });
+  if (!busy) updateSkillSyncSummary();
+}
+
+function formatPlanSample(paths = [], max = 6) {
+  if (!paths.length) return "none";
+  const sample = paths.slice(0, max).join(", ");
+  return paths.length > max ? `${sample}, +${paths.length - max} more` : sample;
+}
+
+function buildSkillPullConfirm(plan) {
+  const summary = plan?.summary || {};
+  const lines = [
+    `Apply remote skill bundle with ${plan?.strategy || "overwrite"} strategy?`,
+    `Add ${summary.add || 0}, update ${summary.update || 0}, remove ${summary.remove || 0}, unchanged ${summary.unchanged || 0}.`,
+  ];
+  if (summary.remove) lines.push(`Remove: ${formatPlanSample(plan.remove || [])}`);
+  if (summary.update) lines.push(`Update: ${formatPlanSample(plan.update || [])}`);
+  lines.push("Continue?");
+  return lines.join("\n");
 }
 
 async function copyText(text) {
@@ -1898,6 +1928,10 @@ async function loadSkillSync({ includeRemote = true, loadingText = "Loading skil
     const data = await res.json();
     const comparison = data.comparison || [];
     if (!comparison.length) {
+      skillSyncPushCount = 0;
+      skillSyncPullCount = 0;
+      skillSyncHasLocalBundle = Boolean(data.local?.length);
+      skillSyncHasRemoteBundle = Boolean(serverUrl && data.remote?.length);
       $("skillSyncList").innerHTML = `<div class="empty"><p>No installed, imported, or remote skills found.</p></div>`;
       $("skillSyncActions").style.display = "none";
       $("skillSyncSummary").textContent = "0 skills";
@@ -1907,6 +1941,10 @@ async function loadSkillSync({ includeRemote = true, loadingText = "Loading skil
 
     skillSyncSelections = {};
     skillSyncTotal = comparison.length;
+    skillSyncPushCount = 0;
+    skillSyncPullCount = 0;
+    skillSyncHasLocalBundle = Boolean(data.local?.length);
+    skillSyncHasRemoteBundle = Boolean(serverUrl && data.remote?.length);
     const items = comparison.map((item) => {
       const installedAgents = (item.installations || [])
         .map((installation) => installation.agent === "codex" ? "Codex" : installation.agent === "claude" ? "Claude" : installation.agent)
@@ -1917,12 +1955,11 @@ async function loadSkillSync({ includeRemote = true, loadingText = "Loading skil
       const importedCurrent = item.remote && item.imported && item.remote.sha256 === item.imported.sha256;
       const canPull = Boolean(serverUrl) && (item.status === "older" || item.status === "remote-only") && !importedCurrent;
       const canPrompt = Boolean(item.local);
-      if (canPush) skillSyncSelections[item.name] = "push";
-      else if (canPull) skillSyncSelections[item.name] = "pull";
-      else skillSyncSelections[item.name] = null;
+      if (canPush) skillSyncPushCount += 1;
+      if (canPull) skillSyncPullCount += 1;
+      skillSyncSelections[item.name] = canPrompt && item.install_status !== "installed" ? "prompt" : null;
 
-      const direction = canPush ? "push" : canPull ? "pull" : null;
-      const displayDirectionLabel = canPush ? "Push Skill" : canPull ? "Pull" : canPrompt ? "Prompt" : item.status === "same" ? "Synced" : item.status.replaceAll("-", " ");
+      const displayDirectionLabel = canPush ? "Push Bundle" : canPull ? "Pull Bundle" : canPrompt ? "Install Prompt" : item.status === "same" ? "Synced" : item.status.replaceAll("-", " ");
       const installLabel = installedAgents.length
         ? installedAgents.join(" + ")
         : item.install_status === "pending-agent-install"
@@ -1934,12 +1971,12 @@ async function loadSkillSync({ includeRemote = true, loadingText = "Loading skil
         `Install: ${installLabel}`,
         item.local?.source_markdown ? `Local: ${item.local.source_markdown}` : null,
       ].filter(Boolean).join(" · ");
-      const enabled = Boolean(direction) || canPrompt;
-      const checked = Boolean(direction) || (canPrompt && item.install_status !== "installed");
+      const enabled = canPrompt;
+      const checked = canPrompt && item.install_status !== "installed";
       return {
         actionable: enabled,
         html: `<label class="skill-sync-item${checked ? " is-selected" : " is-settled"}" title="${esc(title)}">
-          <input class="skill-sync-check" type="checkbox" data-name="${esc(item.name)}" data-dir="${direction || ""}" data-promptable="${canPrompt ? "true" : "false"}" ${checked ? "checked" : ""} ${enabled ? "" : "disabled"} />
+          <input class="skill-sync-check" type="checkbox" data-name="${esc(item.name)}" data-promptable="${canPrompt ? "true" : "false"}" ${checked ? "checked" : ""} ${enabled ? "" : "disabled"} />
           <span>
             <span class="skill-sync-name">${esc(item.name)}</span>
             <span class="skill-sync-meta">
@@ -1986,7 +2023,7 @@ $("skillInstallRefresh").addEventListener("click", () => {
 });
 
 $("skillSyncSelectAll").addEventListener("click", () => {
-  $("skillSyncList").querySelectorAll(".skill-sync-check").forEach((checkbox) => setSkillSyncChecked(checkbox, true));
+  $("skillSyncList").querySelectorAll(".skill-sync-check[data-promptable='true']").forEach((checkbox) => setSkillSyncChecked(checkbox, true));
   updateSkillSyncSummary();
 });
 
@@ -2019,46 +2056,86 @@ $("skillSyncCopyInstallPrompt").addEventListener("click", async () => {
   }
 });
 
-$("skillSyncApply")?.addEventListener("click", async () => {
+async function pushLocalSkillBundle(serverUrl, token) {
+  $("skillSyncSummary").textContent = "Pushing local skill bundle…";
+  const res = await fetch("/api/skills/push", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ server: serverUrl, token }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  const failures = data.results?.filter((r) => !r.ok).map((r) => `${r.name}: ${r.error}`).join("; ");
+  if (failures || data.ok === false) throw new Error(failures || data.error || "Skill bundle push failed");
+  toast(`Pushed local bundle · ${data.bundle?.file_count || 0} files · ${data.bundle?.skills_count || 0} skills`, "success");
+}
+
+async function pullRemoteSkillBundle(serverUrl, strategy) {
+  $("skillSyncSummary").textContent = `Previewing ${strategy} pull for remote skill bundle…`;
+  const previewRes = await fetch("/api/skills/pull-preview", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ server: serverUrl, strategy }),
+  });
+  if (!previewRes.ok) throw new Error(await previewRes.text());
+  const preview = await previewRes.json();
+  if (!preview.plan) throw new Error(preview.results?.find((r) => !r.ok)?.error || "Cannot preview skill pull");
+  const summary = preview.plan.summary || {};
+  const needsConfirm = strategy === "overwrite" && ((summary.remove || 0) > 0 || (summary.update || 0) > 0);
+  if (needsConfirm && !window.confirm(buildSkillPullConfirm(preview.plan))) {
+    $("skillSyncSummary").textContent = "Pull cancelled";
+    return false;
+  }
+
+  $("skillSyncSummary").textContent = "Pulling remote skill bundle…";
+  const res = await fetch("/api/skills/pull", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ server: serverUrl, strategy }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  const failures = data.results?.filter((r) => !r.ok).map((r) => `${r.name}: ${r.error}`).join("; ");
+  if (failures || data.ok === false) throw new Error(failures || data.error || "Skill bundle pull failed");
+  const applied = data.plan?.summary;
+  const suffix = applied ? ` · +${applied.add}/~${applied.update}/-${applied.remove}` : "";
+  toast(`Pulled remote bundle${suffix}`, "success");
+  return true;
+}
+
+async function runSelectedSkillBundleSync(direction) {
   const serverUrl = $("skillSyncServer").value.trim() || syncServerUrl;
   const token = syncToken || localStorage.getItem("syncToken") || "";
-  const pushNames = Object.entries(skillSyncSelections).filter(([, v]) => v === "push").map(([k]) => k);
-  const pullNames = Object.entries(skillSyncSelections).filter(([, v]) => v === "pull").map(([k]) => k);
+  const strategy = $("skillSyncStrategy")?.value === "merge" ? "merge" : "overwrite";
 
-  if (!pushNames.length && !pullNames.length) {
-    $("skillSyncSummary").textContent = "No skills selected";
+  if (!serverUrl) {
+    $("skillSyncSummary").textContent = "Save server first";
+    toast("Save server first", "error");
+    return;
+  }
+  if (direction === "push" && !skillSyncHasLocalBundle) {
+    $("skillSyncSummary").textContent = "No local skill bundle is configured";
+    return;
+  }
+  if (direction === "pull" && !skillSyncHasRemoteBundle) {
+    $("skillSyncSummary").textContent = "No remote skill bundle found";
     return;
   }
 
-  $("skillSyncApply").disabled = true;
+  setSkillSyncBusy(true);
   try {
-    if (pushNames.length) {
-      $("skillSyncSummary").textContent = `Pushing ${pushNames.length} skill(s)…`;
-      const res = await fetch("/api/skills/push", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ server: serverUrl, names: pushNames, token }),
-      });
-      const data = await res.json();
-      const ok = data.results?.filter((r) => r.ok).length || 0;
-      toast(`Pushed ${ok}/${pushNames.length} skills`, "success");
-    }
-    if (pullNames.length) {
-      $("skillSyncSummary").textContent = `Pulling skill bundle for ${pullNames.length} selected skill(s)…`;
-      const res = await fetch("/api/skills/pull", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ server: serverUrl, names: pullNames }),
-      });
-      const data = await res.json();
-      const ok = data.results?.filter((r) => r.ok).length || 0;
-      toast(`Pulled bundle for ${ok}/${pullNames.length} selected skills`, "success");
-    }
+    const completed = direction === "push"
+      ? await pushLocalSkillBundle(serverUrl, token)
+      : await pullRemoteSkillBundle(serverUrl, strategy);
+    if (completed === false) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
     $("skillSyncCompare").click();
   } catch (err) {
-    toast("Skill sync failed: " + err.message, "error");
+    toast(`${direction === "push" ? "Skill bundle push" : "Skill bundle pull"} failed: ${err.message}`, "error");
   } finally {
-    $("skillSyncApply").disabled = false;
+    setSkillSyncBusy(false);
   }
-});
+}
+
+$("skillSyncPush")?.addEventListener("click", () => runSelectedSkillBundleSync("push"));
+$("skillSyncPull")?.addEventListener("click", () => runSelectedSkillBundleSync("pull"));

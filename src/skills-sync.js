@@ -270,8 +270,82 @@ export async function readStoredSkillBundle(stateDir = "state") {
   }
 }
 
-export async function applySkillBundleToDir(bundle, dirPath) {
+function normalizeApplyStrategy(strategy = "overwrite") {
+  return strategy === "merge" ? "merge" : "overwrite";
+}
+
+async function collectManagedFiles(dirPath) {
+  const expanded = expandHome(dirPath);
+  const files = new Map();
+  if (!(await isDirectory(expanded))) return files;
+
+  async function collect(directory) {
+    const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (shouldIgnoreBundleEntry(entry.name)) continue;
+      const fullPath = join(directory, entry.name);
+      const relPath = relative(expanded, fullPath).replace(/\\/g, "/");
+      if (entry.isDirectory()) {
+        if (BUNDLE_IGNORED_DIRS.has(entry.name)) continue;
+        await collect(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const content = await readFile(fullPath, "utf8");
+      files.set(safeBundlePath(relPath), { path: safeBundlePath(relPath), content, sha256: sha256(content) });
+    }
+  }
+
+  await collect(expanded);
+  return files;
+}
+
+export async function planSkillBundleApply(bundle, dirPath, options = {}) {
   if (!bundle?.files || !Array.isArray(bundle.files)) throw new Error("Invalid skill bundle payload");
+  const strategy = normalizeApplyStrategy(options.strategy);
+  const existingFiles = await collectManagedFiles(dirPath);
+  const incomingFiles = new Map(bundle.files.map((file) => {
+    const content = String(file.content ?? "").trimEnd() + "\n";
+    const path = safeBundlePath(file.path);
+    return [path, { path, content, sha256: file.sha256 || sha256(content) }];
+  }));
+
+  const add = [];
+  const update = [];
+  const unchanged = [];
+  for (const incoming of incomingFiles.values()) {
+    const existing = existingFiles.get(incoming.path);
+    if (!existing) add.push(incoming.path);
+    else if (existing.sha256 === incoming.sha256) unchanged.push(incoming.path);
+    else update.push(incoming.path);
+  }
+
+  const remove = strategy === "overwrite"
+    ? [...existingFiles.keys()].filter((path) => !incomingFiles.has(path)).sort((a, b) => a.localeCompare(b))
+    : [];
+
+  return {
+    strategy,
+    target_dir: dirPath,
+    bundle_sha256: bundle.sha256 || bundleHash([...incomingFiles.values()]),
+    file_count: incomingFiles.size,
+    skills_count: Array.isArray(bundle.skills) ? bundle.skills.length : 0,
+    add: add.sort((a, b) => a.localeCompare(b)),
+    update: update.sort((a, b) => a.localeCompare(b)),
+    remove,
+    unchanged: unchanged.sort((a, b) => a.localeCompare(b)),
+    summary: {
+      add: add.length,
+      update: update.length,
+      remove: remove.length,
+      unchanged: unchanged.length,
+    },
+  };
+}
+
+export async function applySkillBundleToDir(bundle, dirPath, options = {}) {
+  if (!bundle?.files || !Array.isArray(bundle.files)) throw new Error("Invalid skill bundle payload");
+  const strategy = normalizeApplyStrategy(options.strategy);
   const expanded = expandHome(dirPath);
   await mkdir(expanded, { recursive: true });
   const incomingPaths = new Set(bundle.files.map((file) => safeBundlePath(file.path)));
@@ -291,7 +365,7 @@ export async function applySkillBundleToDir(bundle, dirPath) {
     }
   }
 
-  await removeOrphans(expanded);
+  if (strategy === "overwrite") await removeOrphans(expanded);
   for (const file of bundle.files) {
     const relPath = safeBundlePath(file.path);
     const destination = join(expanded, relPath);

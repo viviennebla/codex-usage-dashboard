@@ -137,7 +137,7 @@ node src/cli.js register --path ~/agent-skills --type skills --label "Shared Ski
 - Environments：查看不同设备、WSL 或运行环境的聚合情况。
 - Skills & MCP：统计 Claude Skill 调用和 Codex 用户 MCP 工具调用。
 - Sources：添加、移除和检查数据源。
-- Sync：配置远端服务器，执行数据同步或 Skills 同步。
+- Sync：配置远端服务器，分别执行 Usage Data 同步和 Skill Bundles 同步。
 
 ## 快照与状态文件
 
@@ -197,6 +197,8 @@ node src/cli.js web
 
 ## Skills 同步
 
+Usage Data 和 Skill Bundles 是独立同步通道：Usage Data 的 Push/Pull 只处理设备 usage snapshot，不包含 skill bundle 源文件；Skill Bundles 的 Push/Pull 只处理 skill source bundle。
+
 注册一个 `skills` 类型目录后，Dashboard 会把该目录下可移植的 Markdown 文件视为技能源。规则：
 
 - 递归扫描 `.md` 文件。
@@ -210,11 +212,13 @@ node src/cli.js web
 node src/cli.js register --path ~/agent-skills --type skills --label "Shared Skills"
 ```
 
-在 Web 页面进入 **Sync -> Skill Sync** 后，可以：
+在 Web 页面进入 **Sync -> Skill Bundles** 后，可以：
 
 - 比较本地、远端和已安装的技能状态。
-- 推送本地 skill bundle 到远端，或从远端拉取 bundle 到本地技能源目录。
-- 复制 Codex 安装提示词，让 Codex 按 `SKILL_BUNDLE.md` 规则安装或更新选中的本地技能；已安装的技能也可以勾选生成 prompt。
+- 使用 `Push Local Bundle` 将完整本地 skill source bundle 推送到远端。
+- 使用 `Pull Remote Bundle` 先读取完整远端 bundle、预览本地差异，再拉取到本地技能源目录。
+- Pull 支持 `Overwrite` / `Merge`：`Overwrite` 会让本地技能源目录匹配远端 bundle，执行前会预览新增、更新和删除；`Merge` 只写入远端 bundle 内文件并保留本地额外文件。
+- 勾选列表项只用于 `Copy Install Prompt`，让 Codex 按 `SKILL_BUNDLE.md` 规则安装或更新选中的本地技能；已安装的技能也可以勾选生成 prompt。
 
 ### Skill / Plugin 同步设计草案
 
@@ -222,8 +226,8 @@ node src/cli.js register --path ~/agent-skills --type skills --label "Shared Ski
 
 - **资源类型**：`Skill` 和 `Plugin` 分开选择、分开展示状态、分开执行同步。
 - **同步方向**：`Push` 和 `Pull` 都应显式选择方向，不把方向隐藏在同一个按钮里。
-- **应用策略**：`Merge` 和 `Overwrite` 应同时适用于 push 与 pull。`Merge` 表示保留目标端额外文件，只写入 bundle 内文件；`Overwrite` 表示目标端目录应与 bundle 精确匹配。
-- **确认边界**：`Overwrite` 属于破坏性操作，执行前需要展示将被删除或替换的文件摘要。
+- **应用策略**：Pull 已支持 `Merge` 和 `Overwrite`。`Merge` 表示保留目标端额外文件，只写入 bundle 内文件；`Overwrite` 表示目标端目录应与 bundle 精确匹配。
+- **确认边界**：Pull `Overwrite` 执行前会展示将新增、更新和删除的文件摘要，并要求确认。
 - **服务端能力**：远端 API 需要声明支持哪些资源类型和策略，前端只展示服务端明确支持的动作。
 - **冲突处理**：当 skill/plugin 名称不同但功能重叠时，不能自动合并或覆盖，应在生成 prompt 或执行计划中报告冲突并等待人工选择。
 

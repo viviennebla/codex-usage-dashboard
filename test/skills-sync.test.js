@@ -10,6 +10,8 @@ import {
   canonicalSkillMarkdown,
   compareSkills,
   importSkillMarkdown,
+  planSkillBundleApply,
+  scanSelectedSkillBundle,
   scanSkillBundleDir,
   readImportedSkills,
   scanAgentSkillRoot,
@@ -168,6 +170,19 @@ test("skill bundle snapshots include manager rules and omit local junk", async (
   assert.equal(bundle.skills[0].name, "reviewer");
 });
 
+test("scanning selected bundle with no names returns the complete single source bundle", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "skills-selected-all-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "common"), { recursive: true });
+  await writeFile(join(root, SKILL_BUNDLE_FILE), "# Bundle\n", "utf8");
+  await writeFile(join(root, "common", "reviewer.md"), "# Reviewer\n", "utf8");
+
+  const bundle = await scanSelectedSkillBundle([], [{ path: root, type: "skills" }]);
+
+  assert.deepEqual(bundle.files.map((file) => file.path).sort(), [SKILL_BUNDLE_FILE, "common/reviewer.md"].sort());
+  assert.equal(bundle.skills.length, 1);
+});
+
 test("applying a skill bundle makes the local source directory match managed files", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "skills-apply-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -185,5 +200,47 @@ test("applying a skill bundle makes the local source directory match managed fil
   await assert.rejects(readFile(join(root, "AGENTS.md"), "utf8"), /ENOENT/);
   await assert.rejects(readFile(join(root, "common", "old.md"), "utf8"), /ENOENT/);
   assert.equal(await readFile(join(root, SKILL_BUNDLE_FILE), "utf8"), "# New rules\n");
+  assert.equal(await readFile(join(root, "common", "reviewer.md"), "utf8"), "# Reviewer\n");
+});
+
+test("plans skill bundle changes before applying overwrite", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "skills-plan-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "common"), { recursive: true });
+  await writeFile(join(root, "common", "old.md"), "# Old\n", "utf8");
+  await writeFile(join(root, "common", "reviewer.md"), "# Reviewer v1\n", "utf8");
+
+  const plan = await planSkillBundleApply({
+    sha256: "bundle-sha",
+    skills: [{ name: "reviewer" }, { name: "coder" }],
+    files: [
+      { path: "common/reviewer.md", content: "# Reviewer v2\n" },
+      { path: "common/coder.md", content: "# Coder\n" },
+    ],
+  }, root, { strategy: "overwrite" });
+
+  assert.deepEqual(plan.summary, { add: 1, update: 1, remove: 1, unchanged: 0 });
+  assert.deepEqual(plan.add, ["common/coder.md"]);
+  assert.deepEqual(plan.update, ["common/reviewer.md"]);
+  assert.deepEqual(plan.remove, ["common/old.md"]);
+  assert.equal(plan.bundle_sha256, "bundle-sha");
+});
+
+test("merge strategy writes bundle files without deleting local extras", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "skills-merge-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "common"), { recursive: true });
+  await writeFile(join(root, "common", "old.md"), "# Old\n", "utf8");
+
+  const plan = await planSkillBundleApply({
+    files: [{ path: "common/reviewer.md", content: "# Reviewer\n" }],
+  }, root, { strategy: "merge" });
+
+  assert.equal(plan.summary.remove, 0);
+  await applySkillBundleToDir({
+    files: [{ path: "common/reviewer.md", content: "# Reviewer\n" }],
+  }, root, { strategy: "merge" });
+
+  assert.equal(await readFile(join(root, "common", "old.md"), "utf8"), "# Old\n");
   assert.equal(await readFile(join(root, "common", "reviewer.md"), "utf8"), "# Reviewer\n");
 });
