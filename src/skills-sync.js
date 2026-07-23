@@ -346,9 +346,11 @@ export async function planSkillBundleApply(bundle, dirPath, options = {}) {
 export async function applySkillBundleToDir(bundle, dirPath, options = {}) {
   if (!bundle?.files || !Array.isArray(bundle.files)) throw new Error("Invalid skill bundle payload");
   const strategy = normalizeApplyStrategy(options.strategy);
+  const plan = await planSkillBundleApply(bundle, dirPath, { strategy });
   const expanded = expandHome(dirPath);
   await mkdir(expanded, { recursive: true });
   const incomingPaths = new Set(bundle.files.map((file) => safeBundlePath(file.path)));
+  const writePaths = new Set([...plan.add, ...plan.update]);
 
   async function removeOrphans(directory) {
     const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
@@ -368,6 +370,7 @@ export async function applySkillBundleToDir(bundle, dirPath, options = {}) {
   if (strategy === "overwrite") await removeOrphans(expanded);
   for (const file of bundle.files) {
     const relPath = safeBundlePath(file.path);
+    if (!writePaths.has(relPath)) continue;
     const destination = join(expanded, relPath);
     await mkdir(dirname(destination), { recursive: true });
     await writeFile(destination, String(file.content ?? "").trimEnd() + "\n", "utf8");

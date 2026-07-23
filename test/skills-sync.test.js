@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -231,16 +231,27 @@ test("merge strategy writes bundle files without deleting local extras", async (
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, "common"), { recursive: true });
   await writeFile(join(root, "common", "old.md"), "# Old\n", "utf8");
+  await writeFile(join(root, "common", "same.md"), "# Same\n", "utf8");
+  const sameBefore = (await stat(join(root, "common", "same.md"))).mtimeMs;
 
   const plan = await planSkillBundleApply({
-    files: [{ path: "common/reviewer.md", content: "# Reviewer\n" }],
+    files: [
+      { path: "common/reviewer.md", content: "# Reviewer\n" },
+      { path: "common/same.md", content: "# Same\n" },
+    ],
   }, root, { strategy: "merge" });
 
   assert.equal(plan.summary.remove, 0);
+  assert.equal(plan.summary.add, 1);
+  assert.equal(plan.summary.unchanged, 1);
   await applySkillBundleToDir({
-    files: [{ path: "common/reviewer.md", content: "# Reviewer\n" }],
+    files: [
+      { path: "common/reviewer.md", content: "# Reviewer\n" },
+      { path: "common/same.md", content: "# Same\n" },
+    ],
   }, root, { strategy: "merge" });
 
   assert.equal(await readFile(join(root, "common", "old.md"), "utf8"), "# Old\n");
   assert.equal(await readFile(join(root, "common", "reviewer.md"), "utf8"), "# Reviewer\n");
+  assert.equal((await stat(join(root, "common", "same.md"))).mtimeMs, sameBefore);
 });

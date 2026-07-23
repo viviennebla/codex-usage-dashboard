@@ -1865,12 +1865,16 @@ function formatPlanSample(paths = [], max = 6) {
 
 function buildSkillPullConfirm(plan) {
   const summary = plan?.summary || {};
+  const strategy = plan?.strategy || "overwrite";
   const lines = [
-    `Apply remote skill bundle with ${plan?.strategy || "overwrite"} strategy?`,
-    `Add ${summary.add || 0}, update ${summary.update || 0}, remove ${summary.remove || 0}, unchanged ${summary.unchanged || 0}.`,
+    strategy === "merge"
+      ? "Merge remote skill bundle changes into the local source directory?"
+      : "Overwrite the local source directory with the remote skill bundle?",
+    `Add ${summary.add || 0}, overwrite ${summary.update || 0}, remove ${summary.remove || 0}, unchanged ${summary.unchanged || 0}.`,
   ];
+  if (summary.add) lines.push(`Add: ${formatPlanSample(plan.add || [])}`);
+  if (summary.update) lines.push(`Overwrite: ${formatPlanSample(plan.update || [])}`);
   if (summary.remove) lines.push(`Remove: ${formatPlanSample(plan.remove || [])}`);
-  if (summary.update) lines.push(`Update: ${formatPlanSample(plan.update || [])}`);
   lines.push("Continue?");
   return lines.join("\n");
 }
@@ -2081,9 +2085,13 @@ async function pullRemoteSkillBundle(serverUrl, strategy) {
   const preview = await previewRes.json();
   if (!preview.plan) throw new Error(preview.results?.find((r) => !r.ok)?.error || "Cannot preview skill pull");
   const summary = preview.plan.summary || {};
-  const needsConfirm = strategy === "overwrite" && ((summary.remove || 0) > 0 || (summary.update || 0) > 0);
+  const needsConfirm = (summary.add || 0) > 0 || (summary.update || 0) > 0 || (summary.remove || 0) > 0;
   if (needsConfirm && !window.confirm(buildSkillPullConfirm(preview.plan))) {
     $("skillSyncSummary").textContent = "Pull cancelled";
+    return false;
+  }
+  if (!needsConfirm) {
+    toast("Remote bundle already matches local source files", "success");
     return false;
   }
 

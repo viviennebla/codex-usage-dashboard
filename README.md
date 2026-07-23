@@ -217,7 +217,7 @@ node src/cli.js register --path ~/agent-skills --type skills --label "Shared Ski
 - 比较本地、远端和已安装的技能状态。
 - 使用 `Push Local Bundle` 将完整本地 skill source bundle 推送到远端。
 - 使用 `Pull Remote Bundle` 先读取完整远端 bundle、预览本地差异，再拉取到本地技能源目录。
-- Pull 支持 `Overwrite` / `Merge`：`Overwrite` 会让本地技能源目录匹配远端 bundle，执行前会预览新增、更新和删除；`Merge` 只写入远端 bundle 内文件并保留本地额外文件。
+- Pull 支持 `Overwrite` / `Merge`，两者执行前都会预览新增和覆盖项：`Merge` 只应用远端相对本地的新增/更新差异并保留本地额外文件；`Overwrite` 会让本地技能源目录匹配远端 bundle，因此还会预览并删除本地多出来的文件。
 - 勾选列表项只用于 `Copy Install Prompt`，让 Codex 按 `SKILL_BUNDLE.md` 规则安装或更新选中的本地技能；已安装的技能也可以勾选生成 prompt。
 
 ### Skill / Plugin 同步设计草案
@@ -226,8 +226,8 @@ node src/cli.js register --path ~/agent-skills --type skills --label "Shared Ski
 
 - **资源类型**：`Skill` 和 `Plugin` 分开选择、分开展示状态、分开执行同步。
 - **同步方向**：`Push` 和 `Pull` 都应显式选择方向，不把方向隐藏在同一个按钮里。
-- **应用策略**：Pull 已支持 `Merge` 和 `Overwrite`。`Merge` 表示保留目标端额外文件，只写入 bundle 内文件；`Overwrite` 表示目标端目录应与 bundle 精确匹配。
-- **确认边界**：Pull `Overwrite` 执行前会展示将新增、更新和删除的文件摘要，并要求确认。
+- **应用策略**：Pull 已支持 `Merge` 和 `Overwrite`。`Merge` 表示只应用远端新增/更新差异并保留目标端额外文件；`Overwrite` 表示目标端目录应与远端 bundle 精确匹配。
+- **确认边界**：Pull `Merge` 和 `Overwrite` 执行前都会展示将新增和覆盖的文件摘要；`Overwrite` 还会展示将删除的本地文件，并要求确认。
 - **服务端能力**：远端 API 需要声明支持哪些资源类型和策略，前端只展示服务端明确支持的动作。
 - **冲突处理**：当 skill/plugin 名称不同但功能重叠时，不能自动合并或覆盖，应在生成 prompt 或执行计划中报告冲突并等待人工选择。
 
