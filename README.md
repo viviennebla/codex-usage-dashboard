@@ -4,6 +4,10 @@
 
 ![Dashboard Screenshot](public/screenshot.png)
 
+## MVP Release
+
+`v0.2.0-mvp` 是一个源码版 MVP release：Codex Usage Dashboard 已经覆盖 usage、cost、rate limits、sources、model / project / session breakdown，以及跨设备 usage snapshot 和 Skill Bundles 同步。当前仓库没有发布 npm 包或二进制安装包，推荐通过 Git tag 拉取源码运行。
+
 ## 适合做什么
 
 - 查看今天和历史的 Codex / Claude Code token 消耗、请求次数和缓存命中情况。
