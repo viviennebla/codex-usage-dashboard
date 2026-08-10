@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { calculateEventCostUSD, priceEvents } from "../src/pricing.js";
-import { shouldReplaceSnapshot } from "../src/sync.js";
+import { shouldFetchRemoteSnapshot, shouldReplaceSnapshot } from "../src/sync.js";
 
 test("prices GPT-5.5 with its standard input, cache, and output rates", () => {
   const cost = calculateEventCostUSD({
@@ -70,6 +70,30 @@ test("keeps a newer local snapshot when a pull returns an older one", () => {
     shouldReplaceSnapshot(
       { generated_at: "2026-07-10T02:18:00.000Z" },
       { generated_at: "2026-07-10T02:30:00.000Z" },
+    ),
+    true,
+  );
+});
+
+test("skips fetching unchanged remote snapshots by device metadata", () => {
+  assert.equal(
+    shouldFetchRemoteSnapshot(
+      { generated_at: "2026-07-10T02:30:00.000Z" },
+      { generated_at: "2026-07-10T02:30:00.000Z" },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldFetchRemoteSnapshot(
+      { generated_at: "2026-07-10T02:18:00.000Z" },
+      { generated_at: "2026-07-10T02:30:00.000Z" },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldFetchRemoteSnapshot(
+      { generated_at: "2026-07-10T02:30:00.000Z" },
+      { generated_at: null },
     ),
     true,
   );

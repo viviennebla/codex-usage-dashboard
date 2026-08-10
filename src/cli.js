@@ -270,6 +270,19 @@ function startWeb(options) {
     return mergedSnapshot;
   }
 
+  async function getCachedLocalSnapshot() {
+    if (!localSnapshot) {
+      localSnapshot = await readStateFile(options.state);
+      lastSnapshotRefreshAt = Date.parse(localSnapshot?.generated_at || "") || 0;
+    }
+    if (
+      !localSnapshot ||
+      needsNewDaySnapshot(localSnapshot) ||
+      Date.now() - lastSnapshotRefreshAt >= maxSnapshotAgeMs
+    ) return rebuildSnapshot();
+    return localSnapshot;
+  }
+
   async function rebuildSnapshot() {
     if (!refreshInFlight) {
       refreshInFlight = (async () => {
@@ -569,7 +582,7 @@ function startWeb(options) {
         const deviceId = body?.device || hostname();
         if (!serverUrl) { sendError(res, 400, "Missing 'server'"); return; }
 
-        const snapshot = await rebuildSnapshot();
+        const snapshot = await getCachedLocalSnapshot();
         const remoteUrl = String(serverUrl).replace(/\/+$/, "");
         const headers = { "content-type": "application/json" };
         if (token) headers.authorization = `Bearer ${token}`;

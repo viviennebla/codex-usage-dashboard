@@ -18,6 +18,15 @@ export function shouldReplaceSnapshot(existing, incoming) {
   return incomingTime > existingTime;
 }
 
+export function shouldFetchRemoteSnapshot(existing, remoteDevice) {
+  if (!existing) return true;
+  const existingTime = snapshotTime(existing);
+  const remoteTime = Date.parse(remoteDevice?.generated_at || "");
+  if (!Number.isFinite(remoteTime)) return true;
+  if (existingTime === null) return true;
+  return remoteTime > existingTime;
+}
+
 /**
  * Read the current sync state.
  */
@@ -81,6 +90,7 @@ export async function pullFromServer(serverUrl) {
   const synced = [];
   const skipped = [];
   const failed = [];
+  const syncedDeviceMeta = [];
   await recordSyncStatus("pull", "running", { server: baseUrl, message: "Pulling from server..." });
 
   // 1. Fetch device list
@@ -124,12 +134,17 @@ export async function pullFromServer(serverUrl) {
     return { synced, skipped, failed, message };
   }
 
-  // 3. Fetch each device's snapshot (skip self)
+  // 3. Fetch changed device snapshots only (skip self)
   const localId = hostname();
   for (const device of devices) {
     const deviceId = device.device_id;
     if (deviceId === localId) {
       console.log(`[sync] skipping local device: ${deviceId}`);
+      continue;
+    }
+    const existing = localDevices.get(deviceId)?.snapshot || null;
+    if (!shouldFetchRemoteSnapshot(existing, device)) {
+      skipped.push({ deviceId, reason: "remote_snapshot_not_newer" });
       continue;
     }
     try {
@@ -140,7 +155,6 @@ export async function pullFromServer(serverUrl) {
       }
       const snapshot = await res.json();
       const deviceName = device.device_name || deviceId;
-      const existing = localDevices.get(deviceId)?.snapshot || null;
       if (!shouldReplaceSnapshot(existing, snapshot)) {
         skipped.push({ deviceId, reason: "local_snapshot_is_newer_or_remote_timestamp_missing" });
         continue;
@@ -155,24 +169,26 @@ export async function pullFromServer(serverUrl) {
       const todayTokens = snapshot.today?.totalTokens || 0;
 
       synced.push(deviceId);
-
-      // 3. Record sync metadata
-      const syncState = await readSyncState();
-      syncState.lastSyncedAt = new Date().toISOString();
-      syncState.devices = syncState.devices || {};
-      syncState.devices[deviceId] = {
-        lastSyncedAt: syncState.lastSyncedAt,
-        todayTokens,
-      };
-      await writeSyncState(syncState);
+      syncedDeviceMeta.push({ deviceId, todayTokens });
     } catch (err) {
       failed.push({ deviceId, error: err.message });
     }
   }
 
+  if (syncedDeviceMeta.length) {
+    const syncState = await readSyncState();
+    const now = new Date().toISOString();
+    syncState.lastSyncedAt = now;
+    syncState.devices = syncState.devices || {};
+    for (const { deviceId, todayTokens } of syncedDeviceMeta) {
+      syncState.devices[deviceId] = { lastSyncedAt: now, todayTokens };
+    }
+    await writeSyncState(syncState);
+  }
+
   const messageParts = [];
   if (synced.length > 0) messageParts.push(`Synced ${synced.length} device(s)`);
-  if (skipped.length > 0) messageParts.push(`kept ${skipped.length} newer local snapshot(s)`);
+  if (skipped.length > 0) messageParts.push(`skipped ${skipped.length} unchanged/newer snapshot(s)`);
   const message = messageParts.length > 0
     ? `${messageParts.join("; ")} from ${baseUrl}`
     : "No devices were synced";
