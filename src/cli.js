@@ -24,7 +24,7 @@ import {
   resolveSyncConnection,
   updateSyncConnection,
 } from "./config.js";
-import { pullFromServer, recordSyncStatus } from "./sync.js";
+import { pullFromServer, recordSyncStatus, setDeviceSyncEnabled } from "./sync.js";
 import { discoverSourceDiagnostics, inspectSource, sourceLabelMap } from "./sources.js";
 import { CodexLimitsClient } from "./codex-limits.js";
 import { readCodexStatusRateLimits } from "./status.js";
@@ -650,6 +650,82 @@ function startWeb(options) {
           sendError(res, 502, `Failed to fetch device: ${err.message}`);
         }
         return;
+      }
+
+      // ── GET/POST/DELETE /api/local-devices ── manage local sync records
+      if (url.pathname === "/api/local-devices") {
+        const { readSyncState } = await import("./sync.js");
+        const syncState = await readSyncState();
+        if (req.method === "GET") {
+          const devices = await readDeviceStates(stateDir);
+          const managed = [...devices.values()]
+            .filter((device) => device.deviceId !== hostname())
+            .map((device) => ({
+              device_id: device.deviceId,
+              device_name: device.deviceName,
+              generated_at: device.snapshot?.generated_at || null,
+              today_tokens: device.snapshot?.today?.totalTokens || 0,
+              total_tokens: device.snapshot?.totals?.totalTokens || 0,
+              sync_enabled: true,
+              disabled_at: null,
+            }));
+          for (const [deviceId, disabled] of Object.entries(syncState.disabledDevices || {})) {
+            if (deviceId === hostname()) continue;
+            const existing = managed.find((device) => device.device_id === deviceId);
+            const row = {
+              device_id: deviceId,
+              device_name: disabled.deviceName || deviceId,
+              generated_at: disabled.generatedAt || null,
+              today_tokens: 0,
+              total_tokens: disabled.totalTokens || 0,
+              sync_enabled: false,
+              disabled_at: disabled.disabledAt || null,
+            };
+            if (existing) Object.assign(existing, row);
+            else managed.push(row);
+          }
+          managed.sort((a, b) => String(a.device_name).localeCompare(String(b.device_name)));
+          sendJson(res, 200, { devices: managed });
+          return;
+        }
+
+        if (req.method === "DELETE") {
+          const rawDeviceId = url.searchParams.get("device") || "";
+          const deviceId = rawDeviceId.replace(/[^a-zA-Z0-9._-]/g, "_");
+          if (!deviceId || deviceId !== rawDeviceId) {
+            sendError(res, 400, "Invalid device ID");
+            return;
+          }
+          if (deviceId === hostname()) {
+            sendError(res, 400, "The current device cannot be disabled");
+            return;
+          }
+          const devices = await readDeviceStates(stateDir);
+          const existing = devices.get(deviceId);
+          await removeDeviceState(deviceId, stateDir);
+          await setDeviceSyncEnabled(deviceId, false, {
+            deviceName: existing?.deviceName || deviceId,
+            generatedAt: existing?.snapshot?.generated_at || null,
+            totalTokens: existing?.snapshot?.totals?.totalTokens || 0,
+          });
+          invalidateMergedSnapshot();
+          sendJson(res, 200, { ok: true, device_id: deviceId, sync_enabled: false });
+          return;
+        }
+
+        if (req.method === "POST") {
+          const body = await readRequestBody(req);
+          const rawDeviceId = String(body?.device_id || "");
+          const deviceId = rawDeviceId.replace(/[^a-zA-Z0-9._-]/g, "_");
+          if (!deviceId || deviceId !== rawDeviceId || body?.sync_enabled !== true) {
+            sendError(res, 400, "A valid device_id and sync_enabled=true are required");
+            return;
+          }
+          await setDeviceSyncEnabled(deviceId, true);
+          invalidateMergedSnapshot();
+          sendJson(res, 200, { ok: true, device_id: deviceId, sync_enabled: true });
+          return;
+        }
       }
 
       // ── GET /api/devices ── list known devices

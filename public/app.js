@@ -1,3 +1,5 @@
+import { alignedTrendDays } from "./trend.js";
+
 const $ = (id) => document.getElementById(id);
 
 /* ── Helpers ─────────────────────────────── */
@@ -1419,19 +1421,15 @@ function selectedTrendSnapshot(snapshot) {
   const views = trendViews(snapshot);
   if (trendViewIndex >= views.length) trendViewIndex = 0;
   const view = views[trendViewIndex] || views[0];
-  // Always use exactly 30 days — pad with empty days if needed so all views animate
-  let days = (view.recent_days || []).slice(-30);
-  if (days.length < 30) {
-    const pad = [];
-    const last = days[0];
-    const startDate = last ? new Date(last.date) : new Date();
-    for (let i = days.length; i < 30; i++) {
-      const d = new Date(startDate);
-      d.setDate(d.getDate() - (i - days.length + 1));
-      pad.push({ date: d.toISOString().slice(0, 10), totalTokens: 0, eventCount: 0 });
-    }
-    days = [...pad.reverse(), ...days];
-  }
+  const until = snapshot?.filters?.until;
+  const filterEnd = typeof until === "string" && /^\d{8}$/.test(until)
+    ? `${until.slice(0, 4)}-${until.slice(4, 6)}-${until.slice(6, 8)}`
+    : until;
+  const generatedDate = snapshot?.generated_at
+    ? new Date(snapshot.generated_at).toLocaleDateString("en-CA")
+    : null;
+  const endDate = filterEnd || snapshot?.today?.date || generatedDate;
+  const days = alignedTrendDays(view.recent_days || [], endDate, 30);
   return {
     ...snapshot,
     recent_days: days,
@@ -1547,6 +1545,72 @@ async function updateSyncTimes() {
   } catch {}
 }
 
+async function loadManagedDevices() {
+  const target = $("managedDevices");
+  target.innerHTML = emptyState("Loading devices...");
+  try {
+    const res = await fetch("/api/local-devices", { cache: "no-store" });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    const devices = data.devices || [];
+    $("managedDevicesSummary").textContent = `${devices.length} managed`;
+    if (!devices.length) {
+      target.innerHTML = emptyState("No synced device records");
+      return;
+    }
+    target.innerHTML = devices.map((device) => {
+      const disabled = device.sync_enabled === false;
+      const detail = disabled
+        ? `Sync stopped${device.disabled_at ? ` · ${fmtCompactTime(device.disabled_at)}` : ""}`
+        : `Last snapshot ${fmtCompactTime(device.generated_at) || "unknown"} · ${fmtShort(device.total_tokens)} tokens`;
+      const action = disabled
+        ? `<button class="btn managed-device-action" data-action="resume" data-device="${esc(device.device_id)}">Resume Sync</button>`
+        : `<button class="btn managed-device-action danger" data-action="disable" data-device="${esc(device.device_id)}">Delete &amp; Stop</button>`;
+      return `<div class="managed-device-row${disabled ? " is-disabled" : ""}">
+        <div class="managed-device-copy">
+          <div class="row-title">${esc(device.device_name || device.device_id)}</div>
+          <div class="row-detail">${esc(detail)}</div>
+        </div>
+        ${action}
+      </div>`;
+    }).join("");
+  } catch (error) {
+    $("managedDevicesSummary").textContent = "Unavailable";
+    target.innerHTML = emptyState(error.message);
+  }
+}
+
+$("managedDevices").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-action][data-device]");
+  if (!button) return;
+  const deviceId = button.dataset.device;
+  const disabling = button.dataset.action === "disable";
+  if (disabling && !window.confirm(`Delete local record for ${deviceId} and stop pulling it?`)) return;
+
+  button.disabled = true;
+  try {
+    const res = await fetch(
+      disabling
+        ? `/api/local-devices?device=${encodeURIComponent(deviceId)}`
+        : "/api/local-devices",
+      disabling
+        ? { method: "DELETE" }
+        : {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ device_id: deviceId, sync_enabled: true }),
+        },
+    );
+    if (!res.ok) throw new Error(await res.text());
+    await loadManagedDevices();
+    await refresh();
+    toast(disabling ? "Device removed and sync stopped" : "Device sync resumed", "success");
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message, "error");
+  }
+});
+
 $("syncSave").addEventListener("click", async () => {
   const url = $("syncServer").value.trim();
   const token = $("syncToken").value.trim();
@@ -1624,6 +1688,7 @@ $("syncPull").addEventListener("click", async () => {
     $("syncStatus").style.color = failures ? "#f59e0b" : "#22c55e";
     updateSyncTimes();
     await refresh();
+    await loadManagedDevices();
     toast(failures ? "Pull completed with failures" : result.message, failures ? "error" : "success");
   } catch (err) {
     $("syncStatus").textContent = "Usage data pull failed: " + err.message;
@@ -1648,6 +1713,7 @@ $("syncBtn").addEventListener("click", () => {
     panel.style.display = "";
     switchSyncTab("token");
     loadSyncState();
+    loadManagedDevices();
   } else {
     panel.style.display = "none";
   }

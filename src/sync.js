@@ -33,13 +33,19 @@ export function shouldFetchRemoteSnapshot(existing, remoteDevice) {
 export async function readSyncState() {
   try {
     const raw = await readFile(SYNC_FILE, "utf8");
+    const parsed = JSON.parse(raw);
     return {
       lastSyncedAt: null,
       devices: {},
-      ...JSON.parse(raw),
+      disabledDevices: {},
+      ...parsed,
+      devices: parsed.devices && typeof parsed.devices === "object" ? parsed.devices : {},
+      disabledDevices: parsed.disabledDevices && typeof parsed.disabledDevices === "object"
+        ? parsed.disabledDevices
+        : {},
     };
   } catch {
-    return { lastSyncedAt: null, devices: {} };
+    return { lastSyncedAt: null, devices: {}, disabledDevices: {} };
   }
 }
 
@@ -49,6 +55,37 @@ export async function readSyncState() {
 export async function writeSyncState(state) {
   await mkdir(dirname(SYNC_FILE), { recursive: true });
   await writeFile(SYNC_FILE, JSON.stringify(state, null, 2) + "\n", "utf8");
+}
+
+export function updateDeviceSyncPreference(state, deviceId, enabled, details = {}) {
+  const next = {
+    ...state,
+    devices: { ...(state?.devices || {}) },
+    disabledDevices: { ...(state?.disabledDevices || {}) },
+  };
+  if (enabled) {
+    delete next.disabledDevices[deviceId];
+  } else {
+    next.disabledDevices[deviceId] = {
+      deviceName: details.deviceName || deviceId,
+      generatedAt: details.generatedAt || null,
+      totalTokens: Number(details.totalTokens || 0),
+      disabledAt: details.disabledAt || new Date().toISOString(),
+    };
+    delete next.devices[deviceId];
+  }
+  return next;
+}
+
+export function isDeviceSyncDisabled(state, deviceId) {
+  return Boolean(state?.disabledDevices?.[deviceId]);
+}
+
+export async function setDeviceSyncEnabled(deviceId, enabled, details = {}) {
+  const state = await readSyncState();
+  const next = updateDeviceSyncPreference(state, deviceId, enabled, details);
+  await writeSyncState(next);
+  return next;
 }
 
 export async function recordSyncStatus(kind, status, details = {}) {
@@ -92,6 +129,7 @@ export async function pullFromServer(serverUrl) {
   const failed = [];
   const syncedDeviceMeta = [];
   await recordSyncStatus("pull", "running", { server: baseUrl, message: "Pulling from server..." });
+  const syncState = await readSyncState();
 
   // 1. Fetch device list
   let devices;
@@ -121,6 +159,11 @@ export async function pullFromServer(serverUrl) {
   const localDevices = await readDeviceStates();
   for (const [localId] of localDevices) {
     if (localId === hostname()) continue; // keep self
+    if (isDeviceSyncDisabled(syncState, localId)) {
+      const { removeDeviceState } = await import("./state.js");
+      await removeDeviceState(localId);
+      continue;
+    }
     if (!remoteIds.has(localId)) {
       const { removeDeviceState } = await import("./state.js");
       await removeDeviceState(localId);
@@ -138,6 +181,10 @@ export async function pullFromServer(serverUrl) {
   const localId = hostname();
   for (const device of devices) {
     const deviceId = device.device_id;
+    if (isDeviceSyncDisabled(syncState, deviceId)) {
+      skipped.push({ deviceId, reason: "device_sync_disabled" });
+      continue;
+    }
     if (deviceId === localId) {
       console.log(`[sync] skipping local device: ${deviceId}`);
       continue;
@@ -187,8 +234,11 @@ export async function pullFromServer(serverUrl) {
   }
 
   const messageParts = [];
+  const disabledCount = skipped.filter((item) => item.reason === "device_sync_disabled").length;
+  const unchangedCount = skipped.length - disabledCount;
   if (synced.length > 0) messageParts.push(`Synced ${synced.length} device(s)`);
-  if (skipped.length > 0) messageParts.push(`skipped ${skipped.length} unchanged/newer snapshot(s)`);
+  if (unchangedCount > 0) messageParts.push(`skipped ${unchangedCount} unchanged/newer snapshot(s)`);
+  if (disabledCount > 0) messageParts.push(`ignored ${disabledCount} locally disabled device(s)`);
   const message = messageParts.length > 0
     ? `${messageParts.join("; ")} from ${baseUrl}`
     : "No devices were synced";

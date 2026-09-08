@@ -1,4 +1,4 @@
-import { priceModelUsage, pricingTableUpdatedAt } from "./pricing.js";
+import { isCodexModel, priceModelUsage, pricingTableUpdatedAt } from "./pricing.js";
 
 function number(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -38,10 +38,7 @@ function repriceAggregate(row, config) {
     // Aggregated snapshots do not retain an agent per model. Only the explicit
     // Codex product labels may use the Codex fallback; an "unknown" model is
     // left unpriced instead of possibly billing Claude usage as GPT-5.5.
-    const normalizedModel = String(model).toLowerCase();
-    const source = normalizedModel.startsWith("codex-") || normalizedModel.startsWith("gpt-5.6")
-      ? "codex"
-      : "claude";
+    const source = isCodexModel(model) ? "codex" : "claude";
     const price = priceModelUsage(model, usage, config, source);
     models[model] = {
       ...usage,

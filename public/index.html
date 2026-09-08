@@ -86,6 +86,11 @@
             <span id="syncLastPull"></span>
           </div>
           <div id="syncStatus" style="font-size:11px;color:#64748b;font-family:monospace;margin-bottom:12px"></div>
+          <div class="managed-devices-head">
+            <span>Local Device Records</span>
+            <span id="managedDevicesSummary">Loading...</span>
+          </div>
+          <div id="managedDevices" class="managed-devices"></div>
         </div>
         <!-- Skill Sync content -->
         <div id="syncContentSkill" style="display:none">
@@ -143,10 +148,10 @@
       <section class="panel chart-panel">
         <div class="panel-head">
           <h2>Token Trend</h2>
-          <div style="display:flex;align-items:center;gap:6px">
-            <button id="trendPrev" class="btn" style="font-size:11px;padding:2px 6px" title="Previous source">↑</button>
+          <div class="trend-view-switcher">
+            <button id="trendPrev" class="btn" title="Previous source">↑</button>
             <span class="panel-sub" id="trendViewLabel">total</span>
-            <button id="trendNext" class="btn" style="font-size:11px;padding:2px 6px" title="Next source">↓</button>
+            <button id="trendNext" class="btn" title="Next source">↓</button>
           </div>
         </div>
         <div class="chart-wrap">

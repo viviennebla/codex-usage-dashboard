@@ -43,6 +43,13 @@ function sourceAgent(event) {
   return event?.source === "claude" ? "claude" : "codex";
 }
 
+export function isCodexModel(model) {
+  const normalized = normalizeModelName(model);
+  return normalized.startsWith("codex-")
+    || normalized.startsWith("gpt-5.6")
+    || normalized.startsWith("gpt-6-");
+}
+
 function configModels(config = {}) {
   return config.pricing?.models && typeof config.pricing.models === "object"
     ? config.pricing.models
@@ -65,9 +72,9 @@ export function pricingTableUpdatedAt(config = {}) {
 function defaultFallbackModel(event) {
   if (sourceAgent(event) !== "codex") return null;
   const model = normalizeModelName(event.model);
-  // These Codex product labels and GPT-5.6 variants do not have their own
-  // configured table yet, so estimate them with the GPT-5.5 Codex rate.
-  return model === "unknown" || model.startsWith("codex-") || model.startsWith("gpt-5.6")
+  // Codex product labels and newer Codex model variants without their own
+  // configured table are estimated with the GPT-5.5 Codex rate.
+  return model === "unknown" || isCodexModel(model)
     ? "gpt-5.5"
     : null;
 }

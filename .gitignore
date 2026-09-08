@@ -3,6 +3,8 @@ state/
 work/
 outputs/
 .env
+.codex-usage.json
+.codex-usage.local.json
 .DS_Store
 .claude/
 *.log

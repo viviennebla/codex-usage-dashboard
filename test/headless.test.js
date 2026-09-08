@@ -33,3 +33,23 @@ test("headless merge includes remote usage but preserves local account state", a
   assert.deepEqual(merged.skills, local.skills);
   assert.equal(merged.devices.length, 2);
 });
+
+test("headless merge excludes devices with local sync disabled", async () => {
+  const aggregate = (tokens) => ({ totalTokens: tokens, models: {} });
+  const merged = await mergeWithDeviceStates({
+    today: aggregate(20),
+    totals: aggregate(40),
+    models: {},
+  }, {
+    localName: "local",
+    config: {},
+    syncState: { disabledDevices: { retired: { disabledAt: "2026-09-08T00:00:00Z" } } },
+    remoteDevices: new Map([
+      ["active", { deviceName: "active", snapshot: { today: aggregate(30), totals: aggregate(60), models: {} } }],
+      ["retired", { deviceName: "retired", snapshot: { today: aggregate(900), totals: aggregate(900), models: {} } }],
+    ]),
+  });
+
+  assert.equal(merged.today.totalTokens, 50);
+  assert.equal(merged.source_devices.retired, undefined);
+});

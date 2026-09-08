@@ -3,12 +3,17 @@ import { hostname } from "node:os";
 import { readConfig } from "./config.js";
 import { mergeSnapshots } from "./merge.js";
 import { readDeviceStates } from "./state.js";
+import { isDeviceSyncDisabled, readSyncState } from "./sync.js";
 
 export async function mergeWithDeviceStates(snapshot, options = {}) {
   const localName = options.localName || hostname();
   const remoteDevices = options.remoteDevices
     ? new Map(options.remoteDevices)
     : await readDeviceStates(options.stateDir || "state");
+  const syncState = options.syncState || await readSyncState();
+  for (const deviceId of remoteDevices.keys()) {
+    if (isDeviceSyncDisabled(syncState, deviceId)) remoteDevices.delete(deviceId);
+  }
   remoteDevices.delete(localName);
   if (remoteDevices.size === 0) return snapshot;
 

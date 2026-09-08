@@ -177,3 +177,19 @@ test("keeps existing project costs when an older snapshot lacks model details", 
 
   assert.equal(merged.top_projects[0].costUSD, 1.23);
 });
+
+test("reprices GPT-6 Astra from remote Codex snapshots", () => {
+  const usage = {
+    inputTokens: 1_000_000,
+    totalTokens: 1_000_000,
+    models: {
+      "gpt-6-astra": { inputTokens: 1_000_000, totalTokens: 1_000_000 },
+    },
+  };
+  const merged = mergeSnapshots(new Map([
+    ["astra", { deviceName: "astra", snapshot: { today: usage, totals: usage, models: usage.models } }],
+  ]));
+
+  assert.equal(merged.models["gpt-6-astra"].costUSD, 5);
+  assert.equal(merged.models["gpt-6-astra"].costPricingFallback, true);
+});

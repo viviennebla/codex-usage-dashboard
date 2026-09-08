@@ -225,6 +225,8 @@ node src/cli.js cli --json
 - 过期设备的“今日”数据不会混入今天的视图。
 - 速率限制和活动会话等账号相关信息保留本机视角。
 
+Web 页面的 `Sync -> Usage Data -> Local Device Records` 可以删除本地设备快照并停止继续拉取该设备。停同步名单保存在本机 `state/sync.json` 中；恢复后，该设备会在下一次 Pull 时重新同步。
+
 ## Skills 同步
 
 Usage Data 和 Skill Bundles 是独立同步通道：Usage Data 的 Push/Pull 只处理设备 usage snapshot，不包含 skill bundle 源文件；Skill Bundles 的 Push/Pull 只处理 skill source bundle。
@@ -297,7 +299,7 @@ node src/cli.js skills push \
 
 ## 费用估算
 
-默认启用费用估算。内置价格表覆盖部分 OpenAI 和 DeepSeek 模型，并会把一些 Codex 产品模式暂按 GPT-5.5 价格估算。
+默认启用费用估算。内置价格表覆盖部分 OpenAI 和 DeepSeek 模型，并会把一些 Codex 产品模式暂按 GPT-5.5 价格估算。`gpt-6-astra` 会被识别为 Codex 模型，在配置专属价格前同样使用该回退策略并标记为 fallback。
 
 可以在 `~/.codex-usage.json` 中覆盖价格：
 
