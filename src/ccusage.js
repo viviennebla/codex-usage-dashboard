@@ -265,22 +265,25 @@ async function loadThreadStateIndex(homes) {
   return index;
 }
 
-function modelFrom(value) {
-  const stack = [value];
-  while (stack.length) {
-    const current = stack.pop();
-    if (!current || typeof current !== "object") continue;
-    for (const [key, child] of Object.entries(current)) {
-      if (
-        typeof child === "string" &&
-        ["model", "model_name", "modelName", "model_id", "modelId"].includes(key)
-      ) {
-        return child;
-      }
-      if (child && typeof child === "object") stack.push(child);
-    }
+function directModelFrom(value) {
+  if (!value || typeof value !== "object") return null;
+  for (const key of ["model", "model_name", "modelName", "model_id", "modelId"]) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && /[a-z]/i.test(candidate)) return candidate.trim();
   }
   return null;
+}
+
+function modelFrom(payload) {
+  // Model-like fields also occur in MCP results and arbitrary tool data. Only
+  // Codex-owned metadata containers are allowed to change token attribution.
+  return directModelFrom(payload)
+    || directModelFrom(payload?.thread_settings)
+    || directModelFrom(payload?.threadSettings)
+    || directModelFrom(payload?.state)
+    || directModelFrom(payload?.context)
+    || directModelFrom(payload?.info)
+    || null;
 }
 
 function cleanProjectName(projectPath) {

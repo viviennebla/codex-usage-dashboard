@@ -658,15 +658,21 @@ export async function scanAgentInstallations(configDirectories = [], options = {
   ]);
   const installations = [];
   const scannedRoots = new Set();
-  async function scanRoot(root, agent) {
+  async function scanRoot(root, agent, include = () => true) {
     const key = `${agent}:${root.toLowerCase()}`;
     if (scannedRoots.has(key)) return;
     scannedRoots.add(key);
-    installations.push(...await scanAgentSkillRoot(root, agent));
+    const found = await scanAgentSkillRoot(root, agent);
+    installations.push(...found.filter(include));
   }
   for (const home of codexHomes) {
     await scanRoot(join(home, "skills"), "codex");
-    await scanRoot(join(dirname(home), ".agents", "skills"), "codex");
+    // Lark MCP publishes provider-managed skills here; keep them out of the user's sync inventory.
+    await scanRoot(
+      join(dirname(home), ".agents", "skills"),
+      "codex",
+      (installation) => !/^lark-/i.test(installation.name),
+    );
   }
   for (const root of claudeRoots) {
     await scanRoot(join(root, "skills"), "claude");

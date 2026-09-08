@@ -18,6 +18,7 @@ import {
   scanSelectedSkillBundle,
   scanSkillBundleDir,
   readImportedSkills,
+  scanAgentInstallations,
   scanAgentSkillRoot,
   scanSkillDir,
   SKILL_BUNDLE_FILE,
@@ -134,6 +135,28 @@ test("recognizes installed Agent skills from skill-name/SKILL.md", async (t) => 
   assert.equal(installations.length, 1);
   assert.equal(installations[0].name, "reviewer");
   assert.equal(installations[0].agent, "codex");
+});
+
+test("excludes Lark MCP skills from the custom Codex skill inventory", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "custom-skills-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const codexHome = join(root, ".codex");
+  await mkdir(join(codexHome, "skills", "lark-weekly-brief"), { recursive: true });
+  await mkdir(join(root, ".agents", "skills", "lark-im"), { recursive: true });
+  await mkdir(join(root, ".agents", "skills", "personal-helper"), { recursive: true });
+  await writeFile(join(codexHome, "skills", "lark-weekly-brief", "SKILL.md"), "# Personal Lark skill\n", "utf8");
+  await writeFile(join(root, ".agents", "skills", "lark-im", "SKILL.md"), "# Shared MCP skill\n", "utf8");
+  await writeFile(join(root, ".agents", "skills", "personal-helper", "SKILL.md"), "# Shared personal skill\n", "utf8");
+
+  const installations = await scanAgentInstallations(
+    [{ type: "codex", path: codexHome }],
+    { includeDefaults: false, noWsl: true },
+  );
+  const names = installations
+    .filter((installation) => installation.skills_root.startsWith(root))
+    .map((installation) => installation.name);
+
+  assert.deepEqual(names, ["lark-weekly-brief", "personal-helper"]);
 });
 
 test("keeps sync state separate from pending Agent installation", () => {
