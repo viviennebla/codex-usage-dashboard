@@ -1484,11 +1484,40 @@ async function maybePromptSourceImport(snapshot) {
 let syncServerUrl = "";
 let syncToken = "";
 
-function loadSyncState() {
-  syncServerUrl = localStorage.getItem("syncServer") || "";
-  syncToken = localStorage.getItem("syncToken") || "";
-  $("syncServer").value = syncServerUrl;
-  $("syncToken").value = syncToken;
+async function loadSyncState() {
+  const legacyServer = localStorage.getItem("syncServer") || "";
+  const legacyToken = localStorage.getItem("syncToken") || "";
+  let fallbackServer = legacyServer;
+  try {
+    const res = await fetch("/api/sync-config", { cache: "no-store" });
+    if (!res.ok) throw new Error(await res.text());
+    let saved = await res.json();
+    const server = saved.server || legacyServer;
+    fallbackServer = server;
+    if (server && ((!saved.server && legacyServer) || (!saved.has_token && legacyToken))) {
+      const migrateRes = await fetch("/api/sync-config", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ server, ...(legacyToken ? { token: legacyToken } : {}) }),
+      });
+      if (!migrateRes.ok) throw new Error(await migrateRes.text());
+      saved = await migrateRes.json();
+    }
+    syncServerUrl = saved.server || server || "";
+    syncToken = "";
+    $("syncServer").value = syncServerUrl;
+    $("syncToken").value = "";
+    $("syncToken").placeholder = saved.has_token
+      ? "token saved (blank keeps it)"
+      : "token (optional)";
+    localStorage.removeItem("syncServer");
+    localStorage.removeItem("syncToken");
+  } catch {
+    syncServerUrl = fallbackServer;
+    syncToken = legacyToken;
+    $("syncServer").value = syncServerUrl;
+    $("syncToken").value = syncToken;
+  }
   updateSyncTimes();
 }
 
@@ -1532,10 +1561,21 @@ $("syncSave").addEventListener("click", async () => {
       body: JSON.stringify({ server: url }),
     });
     if (!res.ok) throw new Error(await res.text());
+    const saveRes = await fetch("/api/sync-config", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ server: url, ...(token ? { token } : {}) }),
+    });
+    if (!saveRes.ok) throw new Error(await saveRes.text());
+    const saved = await saveRes.json();
     syncServerUrl = url;
-    syncToken = token;
-    localStorage.setItem("syncServer", url);
-    localStorage.setItem("syncToken", token);
+    syncToken = "";
+    $("syncToken").value = "";
+    $("syncToken").placeholder = saved.has_token
+      ? "token saved (blank keeps it)"
+      : "token (optional)";
+    localStorage.removeItem("syncServer");
+    localStorage.removeItem("syncToken");
     $("syncConnStatus").innerHTML = `<span style="color:#22c55e">● connected</span>`;
     updateSyncTimes();
   } catch (err) {
@@ -1551,7 +1591,7 @@ $("syncPush").addEventListener("click", async () => {
     const res = await fetch("/api/push-to-remote", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ server: syncServerUrl, token: syncToken }),
+      body: JSON.stringify({ server: syncServerUrl, ...(syncToken ? { token: syncToken } : {}) }),
     });
     if (!res.ok) throw new Error(await res.text());
     const result = await res.json();
@@ -2113,7 +2153,7 @@ async function pullRemoteSkillBundle(serverUrl, strategy) {
 
 async function runSelectedSkillBundleSync(direction) {
   const serverUrl = $("skillSyncServer").value.trim() || syncServerUrl;
-  const token = syncToken || localStorage.getItem("syncToken") || "";
+  const token = syncToken;
   const strategy = $("skillSyncStrategy")?.value === "merge" ? "merge" : "overwrite";
 
   if (!serverUrl) {

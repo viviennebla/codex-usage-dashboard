@@ -198,7 +198,7 @@ export async function resolveCodexHomes(configDirectories = [], options = {}) {
   const includeDefaults = options.includeDefaults ?? !Object.hasOwn(options, "includeDefaults");
   const defaults = includeDefaults && envHomes.length === 0 ? [join(homedir(), ".codex")] : [];
   const wsl = includeDefaults && !options.noWsl ? await discoverWslCodexHomes() : [];
-  return uniquePaths([...defaults, ...registered, ...wsl]);
+  return uniquePaths([...defaults, ...envHomes, ...registered, ...wsl]);
 }
 
 export async function resolveClaudeRoots(configDirectories = []) {

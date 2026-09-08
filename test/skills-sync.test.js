@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,14 +9,19 @@ import {
   buildCodexSkillInstallPrompt,
   canonicalSkillMarkdown,
   compareSkills,
+  fetchRemoteSkillBundle,
+  fetchRemoteSkills,
   importSkillMarkdown,
+  normalizeSkillServerUrl,
   planSkillBundleApply,
+  pushRemoteSkillBundle,
   scanSelectedSkillBundle,
   scanSkillBundleDir,
   readImportedSkills,
   scanAgentSkillRoot,
   scanSkillDir,
   SKILL_BUNDLE_FILE,
+  validateSkillBundle,
 } from "../src/skills-sync.js";
 
 test("prefers SKILL.md when normalizing a multi-file skill", () => {
@@ -47,6 +52,49 @@ test("recursively identifies each Markdown filename as a skill name", async (t) 
   assert.equal(skills[0].markdown, "# Portable\n");
   assert.equal(skills[0].source_markdown, "common/nested/portable-skill.md");
   assert.equal("files" in skills[0], false);
+});
+
+test("managed source bundles do not expose plugin recipes as skills", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "skills-managed-scan-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "common"), { recursive: true });
+  await mkdir(join(root, "plugins"), { recursive: true });
+  await writeFile(join(root, SKILL_BUNDLE_FILE), "# Bundle\n", "utf8");
+  await writeFile(join(root, "common", "reviewer.md"), "# Reviewer\n", "utf8");
+  await writeFile(join(root, "plugins", "ui-recipe.md"), "# Plugin Recipe\n", "utf8");
+
+  const skills = await scanSkillDir(root);
+  assert.deepEqual(skills.map((skill) => skill.name), ["reviewer"]);
+  assert.equal(skills[0].source_markdown, "common/reviewer.md");
+});
+
+test("skill sync remote helpers validate URLs and forward bearer auth", async () => {
+  assert.equal(normalizeSkillServerUrl("https://sync.example/base/"), "https://sync.example/base");
+  assert.throws(() => normalizeSkillServerUrl("file:///tmp/sync"), /http or https/);
+  assert.throws(() => normalizeSkillServerUrl("https://user:pass@sync.example"), /must not contain credentials/);
+
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.endsWith("/api/skills/bundle") && options.method === "POST") {
+      return new Response(JSON.stringify({ ok: true, sha256: "pushed" }), { status: 200 });
+    }
+    if (url.endsWith("/api/skills/bundle")) {
+      return new Response(JSON.stringify({ files: [{ path: "common/demo.md", content: "# Demo\n" }] }), { status: 200 });
+    }
+    return new Response(JSON.stringify([{ name: "demo" }]), { status: 200 });
+  };
+
+  await fetchRemoteSkills("https://sync.example/", { token: "secret", fetchImpl });
+  await fetchRemoteSkillBundle("https://sync.example/", { token: "secret", fetchImpl });
+  await pushRemoteSkillBundle("https://sync.example/", { files: [] }, { token: "secret", deviceId: "headless", fetchImpl });
+
+  assert.equal(calls[0].url, "https://sync.example/api/skills");
+  assert.equal(calls[0].options.headers.authorization, "Bearer secret");
+  assert.equal(calls[1].url, "https://sync.example/api/skills/bundle");
+  assert.equal(calls[2].options.method, "POST");
+  assert.equal(calls[2].options.headers["content-type"], "application/json");
+  assert.deepEqual(JSON.parse(calls[2].options.body), { bundle: { files: [] }, device_id: "headless" });
 });
 
 test("imports legacy file payloads into a Markdown staging manifest", async (t) => {
@@ -95,6 +143,29 @@ test("keeps sync state separate from pending Agent installation", () => {
 
   assert.equal(result.status, "remote-only");
   assert.equal(result.install_status, "pending-agent-install");
+});
+
+test("reports installed-only skills in comparisons", () => {
+  const installation = { name: "local-helper", agent: "codex", installed_file: "/skills/local-helper/SKILL.md" };
+  const [result] = compareSkills([], [], [], [installation]);
+  assert.equal(result.name, "local-helper");
+  assert.equal(result.status, "installed-only");
+  assert.equal(result.install_status, "installed");
+});
+
+test("validates complete bundle integrity", () => {
+  const content = "# Demo\n";
+  const valid = validateSkillBundle({ files: [{ path: "common/demo.md", content }] });
+  assert.equal(valid.file_count, 1);
+  assert.match(valid.sha256, /^[a-f0-9]{16}$/);
+  assert.throws(
+    () => validateSkillBundle({ files: [{ path: "common/demo.md", content, sha256: "wrong" }] }),
+    /file hash mismatch/,
+  );
+  assert.throws(
+    () => validateSkillBundle({ files: [{ path: "../demo.md", content }] }),
+    /Unsafe bundle path/,
+  );
 });
 
 test("matches Agent installation status by skill name without case sensitivity", () => {
@@ -254,4 +325,18 @@ test("merge strategy writes bundle files without deleting local extras", async (
   assert.equal(await readFile(join(root, "common", "old.md"), "utf8"), "# Old\n");
   assert.equal(await readFile(join(root, "common", "reviewer.md"), "utf8"), "# Reviewer\n");
   assert.equal((await stat(join(root, "common", "same.md"))).mtimeMs, sameBefore);
+});
+
+test("skill bundle apply refuses to write through symlinks", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "skills-symlink-root-"));
+  const outside = await mkdtemp(join(tmpdir(), "skills-symlink-outside-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  await symlink(outside, join(root, "common"), "dir");
+
+  await assert.rejects(
+    applySkillBundleToDir({ files: [{ path: "common/escape.md", content: "# Escape\n" }] }, root, { strategy: "merge" }),
+    /Refusing to write through symlink/,
+  );
+  await assert.rejects(readFile(join(outside, "escape.md"), "utf8"), /ENOENT/);
 });

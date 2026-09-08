@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { basename, dirname, extname, join, relative } from "node:path";
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { resolveClaudeRoots, resolveCodexHomes } from "./sources.js";
 
 const IMPORT_DIR = "imported-skills";
@@ -20,6 +20,10 @@ function sha256(content) {
 
 async function isDirectory(path) {
   try { return (await stat(path)).isDirectory(); } catch { return false; }
+}
+
+async function isFile(path) {
+  try { return (await stat(path)).isFile(); } catch { return false; }
 }
 
 function safeMarkdownFileName(name) {
@@ -55,6 +59,21 @@ function safeBundlePath(path) {
   return normalized;
 }
 
+async function assertNoSymlinkPath(root, relativePath) {
+  let current = root;
+  for (const part of relativePath.split("/")) {
+    current = join(current, part);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) {
+        throw new Error(`Refusing to write through symlink: ${relativePath}`);
+      }
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+  }
+}
+
 function shouldIgnoreBundleEntry(entryName) {
   return BUNDLE_IGNORED_NAMES.has(entryName);
 }
@@ -68,6 +87,26 @@ function bundleHash(files = []) {
     hash.update("\0");
   }
   return hash.digest("hex").slice(0, 16);
+}
+
+export function validateSkillBundle(bundle) {
+  if (!bundle?.files || !Array.isArray(bundle.files)) throw new Error("Invalid skill bundle payload");
+  const paths = new Set();
+  const files = bundle.files.map((file) => {
+    const path = safeBundlePath(file.path);
+    if (paths.has(path)) throw new Error(`Duplicate bundle path: ${path}`);
+    paths.add(path);
+    const content = String(file.content ?? "").trimEnd() + "\n";
+    const contentHash = sha256(content);
+    if (file.sha256 && file.sha256 !== contentHash) throw new Error(`Skill bundle file hash mismatch: ${path}`);
+    return { ...file, path, content, sha256: contentHash };
+  });
+  if (bundle.file_count !== undefined && bundle.file_count !== files.length) {
+    throw new Error(`Skill bundle file count mismatch: expected ${bundle.file_count}, received ${files.length}`);
+  }
+  const computedHash = bundleHash(files);
+  if (bundle.sha256 && bundle.sha256 !== computedHash) throw new Error("Skill bundle hash mismatch");
+  return { ...bundle, files, file_count: files.length, sha256: computedHash };
 }
 
 /** Convert a legacy file map into one portable Markdown document. */
@@ -142,7 +181,12 @@ export async function scanSkillDir(dirPath) {
       } catch { /* Skip unreadable Markdown files. */ }
     }
   }
-  await collect(expanded);
+  // Managed bundles separate portable skills (common/) from plugin recipes
+  // (plugins/). Do not advertise plugin install recipes as Codex skills.
+  const managedCommonDir = join(expanded, "common");
+  const hasManagedLayout = await isDirectory(managedCommonDir)
+    && await isFile(join(expanded, SKILL_BUNDLE_FILE));
+  await collect(hasManagedLayout ? managedCommonDir : expanded);
   return skills;
 }
 
@@ -270,6 +314,83 @@ export async function readStoredSkillBundle(stateDir = "state") {
   }
 }
 
+export function normalizeSkillServerUrl(serverUrl) {
+  const raw = String(serverUrl || "").trim();
+  if (!raw) throw new Error("Missing skill sync server URL");
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`Invalid skill sync server URL: ${raw}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Skill sync server URL must use http or https");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("Skill sync server URL must not contain credentials");
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString().replace(/\/$/, "");
+}
+
+function remoteHeaders(token, includeContentType = false) {
+  const headers = {};
+  if (includeContentType) headers["content-type"] = "application/json";
+  if (token) headers.authorization = `Bearer ${token}`;
+  return headers;
+}
+
+async function readRemoteResponse(response, label) {
+  if (!response.ok) {
+    const detail = (await response.text()).trim();
+    throw new Error(`${label} failed: HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+  }
+  try {
+    return await response.json();
+  } catch {
+    throw new Error(`${label} failed: remote server returned invalid JSON`);
+  }
+}
+
+export async function fetchRemoteSkills(serverUrl, options = {}) {
+  const baseUrl = normalizeSkillServerUrl(serverUrl);
+  const fetchImpl = options.fetchImpl || fetch;
+  const response = await fetchImpl(`${baseUrl}/api/skills`, {
+    headers: remoteHeaders(options.token),
+  });
+  const skills = await readRemoteResponse(response, "Remote skill list");
+  if (!Array.isArray(skills)) throw new Error("Remote skill list failed: invalid payload");
+  return skills;
+}
+
+export async function fetchRemoteSkillBundle(serverUrl, options = {}) {
+  const baseUrl = normalizeSkillServerUrl(serverUrl);
+  const fetchImpl = options.fetchImpl || fetch;
+  const response = await fetchImpl(`${baseUrl}/api/skills/bundle`, {
+    headers: remoteHeaders(options.token),
+  });
+  const bundle = await readRemoteResponse(response, "Remote skill bundle pull");
+  try {
+    return validateSkillBundle(bundle);
+  } catch (error) {
+    throw new Error(`Remote skill bundle pull failed: ${error.message}`);
+  }
+}
+
+export async function pushRemoteSkillBundle(serverUrl, bundle, options = {}) {
+  if (!bundle?.files || !Array.isArray(bundle.files)) throw new Error("Invalid skill bundle payload");
+  const baseUrl = normalizeSkillServerUrl(serverUrl);
+  const fetchImpl = options.fetchImpl || fetch;
+  const response = await fetchImpl(`${baseUrl}/api/skills/bundle`, {
+    method: "POST",
+    headers: remoteHeaders(options.token, true),
+    body: JSON.stringify({ bundle, device_id: options.deviceId || hostname() }),
+  });
+  return readRemoteResponse(response, "Remote skill bundle push");
+}
+
 function normalizeApplyStrategy(strategy = "overwrite") {
   return strategy === "merge" ? "merge" : "overwrite";
 }
@@ -346,8 +467,13 @@ export async function planSkillBundleApply(bundle, dirPath, options = {}) {
 export async function applySkillBundleToDir(bundle, dirPath, options = {}) {
   if (!bundle?.files || !Array.isArray(bundle.files)) throw new Error("Invalid skill bundle payload");
   const strategy = normalizeApplyStrategy(options.strategy);
-  const plan = await planSkillBundleApply(bundle, dirPath, { strategy });
   const expanded = expandHome(dirPath);
+  try {
+    if ((await lstat(expanded)).isSymbolicLink()) throw new Error(`Refusing to use symlink target directory: ${dirPath}`);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  const plan = await planSkillBundleApply(bundle, dirPath, { strategy });
   await mkdir(expanded, { recursive: true });
   const incomingPaths = new Set(bundle.files.map((file) => safeBundlePath(file.path)));
   const writePaths = new Set([...plan.add, ...plan.update]);
@@ -371,6 +497,7 @@ export async function applySkillBundleToDir(bundle, dirPath, options = {}) {
   for (const file of bundle.files) {
     const relPath = safeBundlePath(file.path);
     if (!writePaths.has(relPath)) continue;
+    await assertNoSymlinkPath(expanded, relPath);
     const destination = join(expanded, relPath);
     await mkdir(dirname(destination), { recursive: true });
     await writeFile(destination, String(file.content ?? "").trimEnd() + "\n", "utf8");
@@ -611,7 +738,7 @@ export function compareSkills(localSkills, remoteSkills, importedSkills = [], ag
     existing.push(installation);
     installationsMap.set(nameKey, existing);
   }
-  const allNames = new Set([...localMap.keys(), ...remoteMap.keys(), ...importedMap.keys()]);
+  const allNames = new Set([...localMap.keys(), ...remoteMap.keys(), ...importedMap.keys(), ...installationsMap.keys()]);
   const results = [];
 
   for (const nameKey of allNames) {
@@ -626,7 +753,8 @@ export function compareSkills(localSkills, remoteSkills, importedSkills = [], ag
       else status = (local.last_modified || "") > (remote.last_modified || "") ? "newer" : "older";
     } else if (local) status = "local-only";
     else if (remote) status = "remote-only";
-    else status = "imported-only";
+    else if (imported) status = "imported-only";
+    else status = "installed-only";
 
     let installStatus = installations.length ? "installed" : imported?.install_status || "not-installed";
     if (!installations.length && local && imported && imported.sha256 !== local.sha256) installStatus = "update-pending-agent-install";

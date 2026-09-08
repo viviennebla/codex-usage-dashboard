@@ -36,6 +36,14 @@
 - Node.js `>= 20`
 - 本机已有 Codex 或 Claude Code 日志
 
+无头服务器或纯终端环境直接运行：
+
+```bash
+node src/cli.js
+```
+
+无参数启动会打开交互菜单，可查看/推拉 usage、管理 Skills，以及一次性保存同步服务器和 token。后续命令会自动读取保存的连接信息，不必重复传入多个参数。
+
 启动 Web 仪表盘：
 
 ```bash
@@ -62,8 +70,9 @@ npm start
 npm run web
 npm run snapshot
 npm run cli
-npm run push -- --server http://your-server:34777
-npm run pull -- --server http://your-server:34777
+npm run configure
+npm run push
+npm run pull
 npm run register -- --path /path/to/.codex --type codex --label work
 ```
 
@@ -71,12 +80,19 @@ npm run register -- --path /path/to/.codex --type codex --label work
 
 | 命令 | 说明 |
 | --- | --- |
+| `node src/cli.js` | 打开交互式终端菜单（推荐） |
+| `node src/cli.js configure` | 交互式保存同步服务器和 token；token 输入不回显 |
 | `node src/cli.js web [--port 34777] [--bind 127.0.0.1] [--no-wsl]` | 启动本地 Web 仪表盘 |
 | `node src/cli.js snapshot [--since YYYYMMDD] [--until YYYYMMDD] [--state state/latest.json]` | 生成快照 JSON |
-| `node src/cli.js cli [--since YYYYMMDD] [--until YYYYMMDD] [--no-wsl]` | 在终端打印文本摘要 |
-| `node src/cli.js push --server <url> [--device <name>] [--token <token>]` | 把本机快照推送到同步服务器 |
-| `node src/cli.js pull --server <url>` | 从同步服务器拉取其他设备快照 |
+| `node src/cli.js cli [--json] [--since YYYYMMDD] [--until YYYYMMDD] [--no-wsl]` | 在终端打印本机与已同步设备的聚合摘要；配置过服务器时会先拉取远端 |
+| `node src/cli.js push [--device <name>]` | 使用已保存连接把本机快照推送到同步服务器 |
+| `node src/cli.js pull` | 使用已保存连接从同步服务器拉取其他设备快照 |
 | `node src/cli.js register --path <dir> --type codex\|claude\|skills [--label <name>]` | 注册自定义数据目录或 Skills 源目录 |
+| `node src/cli.js skills` | 打开交互式 Skills 菜单 |
+| `node src/cli.js skills list [--json]` | 使用已保存连接比较本地、远端和已安装 Skills |
+| `node src/cli.js skills pull [--dry-run\|--yes]` | 预览或拉取远端 Skill bundle；交互模式会直接询问确认 |
+| `node src/cli.js skills push [--dry-run]` | 推送完整本地 Skill bundle |
+| `node src/cli.js skills prompt [--path <dir>] [--names a,b\|--all]` | 输出 Codex Skill 安装提示词 |
 
 常用筛选参数：
 
@@ -174,11 +190,14 @@ DASHBOARD_TOKEN=your-secret-token node src/cli.js web --bind 0.0.0.0 --port 3477
 
 ### 设备端推送
 
+推荐先交互式保存连接：
+
 ```bash
-node src/cli.js push --server http://your-server:34777 --device laptop --token your-secret-token
+node src/cli.js configure
+node src/cli.js push --device laptop
 ```
 
-也可以用环境变量传 token：
+token 会保存在 `~/.codex-usage.json`，文件权限会收紧为 `0600`，输入时不会回显。参数和环境变量仍可用于临时覆盖：
 
 ```bash
 DASHBOARD_TOKEN=your-secret-token node src/cli.js push --server http://your-server:34777 --device laptop
@@ -187,8 +206,15 @@ DASHBOARD_TOKEN=your-secret-token node src/cli.js push --server http://your-serv
 ### 设备端拉取
 
 ```bash
-node src/cli.js pull --server http://your-server:34777
+node src/cli.js pull
 node src/cli.js web
+```
+
+无头服务器可以在一次命令中先拉取、合并并打印所有设备的终端摘要，不需要启动 Web 服务：
+
+```bash
+node src/cli.js cli
+node src/cli.js cli --json
 ```
 
 合并策略：
@@ -223,6 +249,40 @@ node src/cli.js register --path ~/agent-skills --type skills --label "Shared Ski
 - 使用 `Pull Remote Bundle` 先读取完整远端 bundle、预览本地差异，再拉取到本地技能源目录。
 - Pull 支持 `Overwrite` / `Merge`，两者执行前都会预览新增和覆盖项：`Merge` 只应用远端相对本地的新增/更新差异并保留本地额外文件；`Overwrite` 会让本地技能源目录匹配远端 bundle，因此还会预览并删除本地多出来的文件。
 - 勾选列表项只用于 `Copy Install Prompt`，让 Codex 按 `SKILL_BUNDLE.md` 规则安装或更新选中的本地技能；已安装的技能也可以勾选生成 prompt。
+
+### 无头服务器 CLI
+
+Skill bundle 的完整同步流程不需要启动 Web 服务或浏览器。推荐直接打开交互菜单：
+
+```bash
+node src/cli.js
+# 或直接进入 Skills 子菜单
+node src/cli.js skills
+```
+
+菜单会在首次需要时询问 Skill 源目录、拉取策略和写入确认。配置完成后，日常命令可保持很短：
+
+```bash
+node src/cli.js skills list
+node src/cli.js skills pull
+node src/cli.js skills push
+
+# 输出给 Codex 使用的安装/更新 prompt
+node src/cli.js skills prompt --all
+```
+
+`pull` 会验证 bundle 路径、文件数量和 SHA-256 摘要。没有 `--yes` 时只输出变更计划并以状态码 `2` 结束；`--dry-run` 输出计划并以状态码 `0` 结束。需要复用目录时，可以继续用 `register --type skills` 注册，之后省略 `--path`。
+
+在 cron/CI 等非交互环境中，原有完整参数仍然有效；也可以用环境变量临时覆盖已保存 token：
+
+```bash
+DASHBOARD_TOKEN=your-secret-token \
+node src/cli.js skills push \
+  --server https://your-server.example \
+  --path /srv/codex-skills
+```
+
+`skills prompt` 只生成安装提示词；它不会把源 Markdown 冒充成已安装 Codex Skill。Codex 仍需按 bundle 中的 `SKILL_BUNDLE.md` 生成、验证并安装目标包。
 
 ### Skill / Plugin 同步设计草案
 
@@ -291,12 +351,18 @@ node src/cli.js web --no-cost
 | `--state-dir` | `state` | 设备快照和同步状态目录 |
 | `--no-cost` | false | 禁用费用估算 |
 | `--no-wsl` | false | 跳过 WSL Codex Home 自动探测 |
-| `--token` | 无 | push 或 Web 同步操作使用的认证 token |
-| `DASHBOARD_TOKEN` | 无 | Web 接收 push / skill bundle 时使用的 Bearer token |
+| `--token` | 已保存 token | 临时覆盖 push 或 Skill 同步使用的客户端认证 token |
+| `--strategy` | `merge`（Skills CLI） | Skill bundle pull 策略：`merge` 或 `overwrite` |
+| `--dry-run` | false | 只预览 Skill pull 或 push，不产生写入 |
+| `--yes`, `-y` | false | 允许无交互应用 Skill pull 变更 |
+| `--json` | false | 为支持的 Skills CLI 命令输出 JSON |
+| `DASHBOARD_TOKEN` | 已保存 token | 覆盖本机保存的客户端 token；Web 服务端也用它保护接收 push / skill bundle 的接口 |
 | `CODEX_HOME` | `~/.codex` | Codex Home；可用系统路径分隔符注册多个 |
 | `CLAUDE_CONFIG_DIR` | 自动探测 | Claude Code 配置根目录；可用 `,` 或 `;` 分隔多个 |
 | `CODEX_USAGE_INCLUDE_WSL` | `1` | 设置为 `0` 可关闭 WSL 自动探测 |
 | `CODEX_USAGE_CODEX_BIN` | `codex` | 读取 rate limit 时使用的 Codex 可执行文件 |
+
+客户端连接读取优先级为：命令行 `--server` / `--token`、`DASHBOARD_TOKEN`、`~/.codex-usage.json` 中保存的 `sync` 配置。Web 页面与 CLI 使用同一份本机配置；旧版 Web `localStorage` 中的连接会在打开 Sync 面板时自动迁移。
 
 ## 本地 API
 
@@ -312,6 +378,8 @@ node src/cli.js web --no-cost
 | `POST /api/sources` | 注册数据源 |
 | `DELETE /api/sources?path=...&type=...` | 移除数据源 |
 | `GET /api/devices` | 列出服务器保存的设备快照 |
+| `GET /api/sync-config` | 返回共享连接的服务器地址和是否已保存 token（不返回 token 内容） |
+| `POST /api/sync-config` | 保存 Web/CLI 共用的本机同步连接 |
 | `POST /api/push` | 接收设备快照，启用 `DASHBOARD_TOKEN` 时需要认证 |
 | `GET /api/snapshot/:deviceId` | 获取某个设备快照 |
 | `POST /api/sync` | 从远端服务器拉取全部设备 |
@@ -332,6 +400,9 @@ public/
   styles.css       样式
 src/
   cli.js           CLI、Web 服务和 API 路由
+  interactive-cli.js  交互菜单和安全输入
+  skills-cli.js    无头 Skills 子命令
+  headless.js      无头模式的多设备聚合
   loader.js        加载 Codex + Claude 报告并统一聚合
   ccusage.js       Codex JSONL 解析器
   claude.js        Claude Code JSONL 解析器

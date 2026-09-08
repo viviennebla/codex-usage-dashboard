@@ -14,7 +14,9 @@
     "web": "node src/cli.js web",
     "push": "node src/cli.js push",
     "pull": "node src/cli.js pull",
-    "register": "node src/cli.js register"
+    "configure": "node src/cli.js configure",
+    "register": "node src/cli.js register",
+    "skills": "node src/cli.js skills"
   },
   "files": [
     "src/",

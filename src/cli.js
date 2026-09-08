@@ -16,11 +16,26 @@ import {
   removeDeviceState,
 } from "./state.js";
 import { FileParseCache } from "./file-cache.js";
-import { addDirectory, listDirectories, removeDirectory, readConfig } from "./config.js";
+import {
+  addDirectory,
+  listDirectories,
+  removeDirectory,
+  readConfig,
+  resolveSyncConnection,
+  updateSyncConnection,
+} from "./config.js";
 import { pullFromServer, recordSyncStatus } from "./sync.js";
 import { discoverSourceDiagnostics, inspectSource, sourceLabelMap } from "./sources.js";
 import { CodexLimitsClient } from "./codex-limits.js";
 import { readCodexStatusRateLimits } from "./status.js";
+import { runSkillsCli } from "./skills-cli.js";
+import { mergeWithDeviceStates } from "./headless.js";
+import {
+  configureConnection,
+  createTerminalPrompter,
+  runInteractiveCli,
+  runInteractiveSkillsCli,
+} from "./interactive-cli.js";
 
 process.stdout.on("error", () => {});
 process.stderr.on("error", () => {});
@@ -33,7 +48,8 @@ const MIME = {
 };
 
 function parseArgs(argv) {
-  const [command = "--help", ...rest] = argv;
+  const [command = "interactive", ...rawRest] = argv;
+  const rest = [...rawRest];
   const options = {
     command,
     state: DEFAULT_STATE_PATH,
@@ -41,6 +57,9 @@ function parseArgs(argv) {
     port: 34777,
     bind: "127.0.0.1",
   };
+  if (command === "skills" && rest[0] && !rest[0].startsWith("-")) {
+    options.skillsAction = rest.shift();
+  }
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
     if (arg === "--since") options.since = rest[++index];
@@ -59,6 +78,13 @@ function parseArgs(argv) {
     else if (arg === "--server") options.server = rest[++index];
     else if (arg === "--device") options.device = rest[++index];
     else if (arg === "--token") options.token = rest[++index];
+    else if (arg === "--names") options.names = rest[++index];
+    else if (arg === "--strategy") options.strategy = rest[++index];
+    else if (arg === "--yes" || arg === "-y") options.yes = true;
+    else if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--json") options.json = true;
+    else if (arg === "--all") options.all = true;
+    else if (arg === "--help" || arg === "-h") options.help = true;
   }
   return options;
 }
@@ -67,20 +93,30 @@ function help() {
   return `Codex Usage Dashboard
 
 Usage:
+  node src/cli.js                         Open the interactive terminal menu
+  node src/cli.js configure               Save the sync server and token
   node src/cli.js snapshot [--since YYYYMMDD] [--state state/latest.json]
-  node src/cli.js cli [--since YYYYMMDD] [--no-wsl]
+  node src/cli.js cli [--json] [--since YYYYMMDD] [--no-wsl]
   node src/cli.js web [--port 34777] [--bind 127.0.0.1] [--no-wsl]
-  node src/cli.js push --server <url> [--device <name>] [--token <token>]
-  node src/cli.js pull --server <url>
+  node src/cli.js push [--device <name>]
+  node src/cli.js pull
   node src/cli.js register --path <dir> --type codex|claude|skills [--label <name>]
+  node src/cli.js skills [list|pull|push|prompt] [advanced options]
+  node src/cli.js skills prompt [--path <dir>] [--names a,b|--all] [--json]
 
 Commands:
+  interactive  Open the guided terminal menu (default).
+  configure    Save connection settings for CLI and Web use.
   snapshot  Write the canonical dashboard snapshot.
   cli       Print a terminal summary from the snapshot.
   web       Start the local web dashboard.
   push      Push local snapshot to a remote dashboard server.
   pull      Pull snapshots from a remote dashboard server.
   register  Register a custom agent data directory.
+  skills       Open the Skills menu, or run a non-interactive subcommand.
+
+Connection settings are saved in ~/.codex-usage.json. Explicit --server/--token
+options and DASHBOARD_TOKEN still override saved values for automation.
 `;
 }
 
@@ -167,7 +203,7 @@ function sendError(res, status, message) {
 }
 
 function startWeb(options) {
-  const token = process.env.DASHBOARD_TOKEN || null;
+  const serverAuthToken = process.env.DASHBOARD_TOKEN || null;
   const stateDir = options.stateDir || "state";
   const maxSnapshotAgeMs = 5 * 60_000;
   const fileCache = new FileParseCache();
@@ -198,61 +234,7 @@ function startWeb(options) {
   }
 
   async function buildMergedSnapshot(snapshot) {
-    const remoteDevices = await readDeviceStates(stateDir);
-    const localName = hostname();
-    remoteDevices.delete(localName); // never merge own stale snapshot
-    if (remoteDevices.size === 0) return snapshot;
-
-    const { mergeSnapshots } = await import("./merge.js");
-    const allDevices = new Map(remoteDevices);
-    allDevices.set(localName, { deviceName: localName, snapshot });
-    const cfg = await readConfig();
-    const merged = mergeSnapshots(allDevices, cfg);
-
-    // Carry over device-specific fields from the local snapshot.
-    merged.skills = snapshot.skills || [];
-    // Rate limits come from the active Codex account on this machine.
-    // Synced device snapshots can be stale or from a different session, so keep
-    // the dashboard's limit view tied to the local Codex status API.
-    merged.limits = snapshot.limits || null;
-    merged.limit_updated_at = snapshot.limit_updated_at || null;
-    merged.limit_source = snapshot.limit_source || null;
-    merged.limit_error = snapshot.limit_error || null;
-    merged.burn_rate = snapshot.burn_rate || null;
-    merged.active_session = snapshot.active_session || null;
-    merged.devices = Object.values(merged.source_devices || {});
-
-    const mergedSS = {};
-    for (const [, { snapshot: devSnap }] of allDevices) {
-      const ss = devSnap?.source_status;
-      if (!ss) continue;
-      for (const [src, info] of Object.entries(ss)) {
-        if (!mergedSS[src]) {
-          mergedSS[src] = { ...info };
-        } else {
-          mergedSS[src].today_events += info.today_events || 0;
-          mergedSS[src].today_tokens += info.today_tokens || 0;
-          mergedSS[src].total_events += info.total_events || 0;
-          if (info.last_activity && (!mergedSS[src].last_activity || info.last_activity > mergedSS[src].last_activity)) {
-            mergedSS[src].last_activity = info.last_activity;
-          }
-        }
-      }
-    }
-    const now = new Date();
-    for (const s of Object.values(mergedSS)) {
-      const hoursSince = s.last_activity
-        ? Math.round((now - new Date(s.last_activity)) / 3600000 * 10) / 10
-        : Infinity;
-      s.hours_since_last = hoursSince === Infinity ? null : hoursSince;
-      s.status = hoursSince <= 1 ? "active"
-        : hoursSince <= 24 ? "recent"
-        : hoursSince <= 48 ? "idle"
-        : hoursSince <= 168 ? "stale"
-        : "expired";
-    }
-    merged.source_status = mergedSS;
-    return merged;
+    return mergeWithDeviceStates(snapshot, { stateDir });
   }
 
   async function getCachedSnapshot() {
@@ -344,7 +326,7 @@ function startWeb(options) {
 
       // ── POST /api/push ── receive a device snapshot
       if (req.method === "POST" && url.pathname === "/api/push") {
-        if (!checkAuth(req, token)) {
+        if (!checkAuth(req, serverAuthToken)) {
           sendError(res, 401, "Unauthorized — invalid or missing token");
           return;
         }
@@ -368,7 +350,7 @@ function startWeb(options) {
 
       // ── DELETE /api/push?device=... ── remove a device
       if (req.method === "DELETE" && url.pathname === "/api/push") {
-        if (!checkAuth(req, token)) {
+        if (!checkAuth(req, serverAuthToken)) {
           sendError(res, 401, "Unauthorized");
           return;
         }
@@ -427,10 +409,37 @@ function startWeb(options) {
         return;
       }
 
+      // ── GET/POST /api/sync-config ── share local connection settings with the CLI
+      if (url.pathname === "/api/sync-config") {
+        if (req.method === "GET") {
+          const config = await readConfig();
+          sendJson(res, 200, {
+            server: config.sync?.server || null,
+            has_token: Boolean(config.sync?.token || process.env.DASHBOARD_TOKEN),
+          });
+          return;
+        }
+        if (req.method === "POST") {
+          const body = await readRequestBody(req);
+          if (!body?.server) {
+            sendError(res, 400, "Missing server");
+            return;
+          }
+          const sync = await updateSyncConnection({
+            server: body.server,
+            token: typeof body.token === "string" && body.token ? body.token : undefined,
+            clearToken: body.clear_token === true,
+          });
+          sendJson(res, 200, { server: sync.server, has_token: Boolean(sync.token) });
+          return;
+        }
+      }
+
       // ── POST /api/sync ── trigger pull from remote server
       if (req.method === "POST" && url.pathname === "/api/sync") {
         const body = await readRequestBody(req);
-        const serverUrl = body?.server;
+        const config = await readConfig();
+        const { server: serverUrl } = resolveSyncConnection(body || {}, config);
         if (!serverUrl) {
           sendError(res, 400, "Missing 'server' in request body");
           return;
@@ -577,8 +586,8 @@ function startWeb(options) {
       // ── POST /api/push-to-remote ── push local snapshot to a remote sync server
       if (req.method === "POST" && url.pathname === "/api/push-to-remote") {
         const body = await readRequestBody(req);
-        const serverUrl = body?.server;
-        const token = body?.token || null;
+        const config = await readConfig();
+        const { server: serverUrl, token } = resolveSyncConnection(body || {}, config);
         const deviceId = body?.device || hostname();
         if (!serverUrl) { sendError(res, 400, "Missing 'server'"); return; }
 
@@ -767,7 +776,7 @@ function startWeb(options) {
           return;
         }
         if (req.method === "POST") {
-          if (!checkAuth(req, token)) {
+          if (!checkAuth(req, serverAuthToken)) {
             sendError(res, 401, "Unauthorized");
             return;
           }
@@ -792,9 +801,9 @@ function startWeb(options) {
       // ── POST /api/skills/compare ── compare local vs remote
       if (req.method === "POST" && url.pathname === "/api/skills/compare") {
         const body = await readRequestBody(req);
-        const serverUrl = body?.server;
         const { scanAllSkillDirs, compareSkills, readImportedSkills, scanAgentInstallations } = await import("./skills-sync.js");
         const cfg = await readConfig();
+        const { server: serverUrl } = resolveSyncConnection(body || {}, cfg);
         const localSkills = await scanAllSkillDirs(cfg.directories || []);
         const importedSkills = await readImportedSkills(stateDir);
         const installations = await scanAgentInstallations(cfg.directories || [], options);
@@ -828,12 +837,11 @@ function startWeb(options) {
       // ── POST /api/skills/push ── push the complete local skill source bundle to remote
       if (req.method === "POST" && url.pathname === "/api/skills/push") {
         const body = await readRequestBody(req);
-        const serverUrl = body?.server;
         const names = body?.names || [];
-        const token = body?.token || null;
-        if (!serverUrl) { sendError(res, 400, "Missing server"); return; }
         const { scanSelectedSkillBundle } = await import("./skills-sync.js");
         const cfg = await readConfig();
+        const { server: serverUrl, token } = resolveSyncConnection(body || {}, cfg);
+        if (!serverUrl) { sendError(res, 400, "Missing server"); return; }
         const remoteUrl = String(serverUrl).replace(/\/+$/, "");
         const results = [];
         const headers = { "content-type": "application/json" };
@@ -859,12 +867,12 @@ function startWeb(options) {
       // ── POST /api/skills/pull-preview|pull ── preview or pull the complete remote skill source bundle
       if (req.method === "POST" && (url.pathname === "/api/skills/pull" || url.pathname === "/api/skills/pull-preview")) {
         const body = await readRequestBody(req);
-        const serverUrl = body?.server;
         const names = body?.names || [];
         const strategy = body?.strategy === "merge" ? "merge" : "overwrite";
-        if (!serverUrl) { sendError(res, 400, "Missing server"); return; }
         const { applySkillBundleToDir, planSkillBundleApply, scanAllSkillDirs } = await import("./skills-sync.js");
         const cfg = await readConfig();
+        const { server: serverUrl } = resolveSyncConnection(body || {}, cfg);
+        if (!serverUrl) { sendError(res, 400, "Missing server"); return; }
         const localSkills = await scanAllSkillDirs(cfg.directories || []);
         const localMap = new Map(localSkills.map((skill) => [skill.name.toLowerCase(), skill]));
         const sourceDirs = new Set(names.map((name) => localMap.get(String(name).toLowerCase())?.source_dir).filter(Boolean));
@@ -912,28 +920,25 @@ function startWeb(options) {
   });
 
   server.listen(options.port, options.bind, () => {
-    const devicesHint = token ? "multi-device push enabled" : "local-only (set DASHBOARD_TOKEN for push auth)";
+    const devicesHint = serverAuthToken ? "multi-device push enabled" : "local-only (set DASHBOARD_TOKEN for push auth)";
     console.log(`Codex Usage Dashboard: http://${options.bind}:${options.port}`);
     console.log(`  ${devicesHint}`);
   });
 }
 
 async function pushSnapshot(options) {
-  if (!options.server) {
-    console.error("Error: --server <url> is required for the push command.");
-    console.error("Example: npm run push -- --server http://your-server:34777 --device my-laptop");
-    process.exitCode = 2;
-    return;
-  }
+  const config = await readConfig();
+  const connection = resolveSyncConnection(options, config);
+  if (!connection.server) throw new Error("No sync server is configured; run `node src/cli.js configure` first");
 
   const deviceId = options.device || hostname();
-  const token = options.token || process.env.DASHBOARD_TOKEN || null;
+  const token = connection.token;
 
   console.log(`Creating snapshot...`);
   const snapshot = await createSnapshot(options);
   console.log(`  Today: ${snapshot.today?.totalTokens?.toLocaleString("en-US") || 0} tokens`);
 
-  const serverUrl = String(options.server).replace(/\/+$/, "");
+  const serverUrl = String(connection.server).replace(/\/+$/, "");
   const pushUrl = `${serverUrl}/api/push`;
 
   console.log(`Pushing to ${pushUrl} as "${deviceId}"...`);
@@ -969,6 +974,32 @@ async function pushSnapshot(options) {
 
   const result = await response.json();
   console.log(`Push OK — device "${result.device_id}" registered on server.`);
+}
+
+async function pullSnapshots(options) {
+  const config = await readConfig();
+  const { server } = resolveSyncConnection(options, config);
+  if (!server) throw new Error("No sync server is configured; run `node src/cli.js configure` first");
+  console.log(`Pulling from ${server}...`);
+  const result = await pullFromServer(server);
+  console.log(result.message);
+  for (const id of result.synced) console.log(`  OK  ${id}`);
+  for (const failure of result.failed) console.log(`  FAIL  ${failure.deviceId} — ${failure.error}`);
+  return result;
+}
+
+async function showUsage(options) {
+  const config = await readConfig();
+  const { server } = resolveSyncConnection(options, config);
+  if (server) {
+    const result = await pullFromServer(server);
+    console.error(`[sync] ${result.message}`);
+    for (const failure of result.failed) console.error(`[sync] ${failure.deviceId}: ${failure.error}`);
+  }
+  const localSnapshot = await createSnapshot(options);
+  const snapshot = await mergeWithDeviceStates(localSnapshot, { stateDir: options.stateDir });
+  console.log(options.json ? JSON.stringify(snapshot, null, 2) : formatCli(snapshot));
+  return snapshot;
 }
 
 async function registerDirectory(options) {
@@ -1011,8 +1042,32 @@ async function registerDirectory(options) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
 
+  if (options.command === "interactive") {
+    if (!process.stdin.isTTY) {
+      console.log(help());
+      return;
+    }
+    process.exitCode = await runInteractiveCli(options, {
+      showUsage,
+      pushUsage: pushSnapshot,
+      pullUsage: pullSnapshots,
+    });
+    return;
+  }
+
   if (options.command === "--help" || options.command === "-h") {
     console.log(help());
+    return;
+  }
+
+  if (["configure", "config", "connect"].includes(options.command)) {
+    if (!process.stdin.isTTY) throw new Error("Connection setup requires an interactive terminal");
+    const prompt = createTerminalPrompter();
+    try {
+      await configureConnection(prompt);
+    } finally {
+      prompt.close();
+    }
     return;
   }
 
@@ -1024,8 +1079,7 @@ async function main() {
   }
 
   if (options.command === "cli") {
-    const snapshot = await createSnapshot(options);
-    console.log(formatCli(snapshot));
+    await showUsage(options);
     return;
   }
 
@@ -1040,30 +1094,30 @@ async function main() {
   }
 
   if (options.command === "pull") {
-    if (!options.server) {
-      console.error("Error: --server <url> is required for the pull command.");
-      console.error("Example: node src/cli.js pull --server http://your-server:34777");
-      process.exitCode = 2;
-      return;
-    }
-    console.log(`Pulling from ${options.server}...`);
-    const result = await pullFromServer(options.server);
-    console.log(result.message);
-    if (result.synced.length > 0) {
-      for (const id of result.synced) {
-        console.log(`  OK  ${id}`);
-      }
-    }
-    if (result.failed.length > 0) {
-      for (const f of result.failed) {
-        console.log(`  FAIL  ${f.deviceId} — ${f.error}`);
-      }
-    }
+    await pullSnapshots(options);
     return;
   }
 
   if (options.command === "register") {
     await registerDirectory(options);
+    return;
+  }
+
+  if (options.command === "skills") {
+    if (options.help) {
+      console.log(help());
+      return;
+    }
+    if (!options.skillsAction && process.stdin.isTTY) {
+      const prompt = createTerminalPrompter();
+      try {
+        await runInteractiveSkillsCli(options, prompt);
+      } finally {
+        prompt.close();
+      }
+      return;
+    }
+    process.exitCode = await runSkillsCli(options);
     return;
   }
 
