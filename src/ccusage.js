@@ -3,6 +3,7 @@ import { access, readFile, readdir } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline";
 import { codexEnvironmentForHome, resolveCodexHomes } from "./sources.js";
+import { dayKey } from "./time.js";
 
 const DATE_ONLY = /^(\d{4})-?(\d{2})-?(\d{2})$/;
 const CODEX_GENERATED_DATE_DIR = /^\d{4}-\d{2}-\d{2}$/;
@@ -94,18 +95,6 @@ function withinFilters(timestamp, options) {
   if (since && ms < since) return false;
   if (until && ms > until) return false;
   return true;
-}
-
-function dayKey(timestamp, timezone) {
-  const tz = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(timestamp));
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function unique(values) {
@@ -416,9 +405,9 @@ export function collectCodexToolCalls(payloads = []) {
   return [...toolCounts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
-async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, options) {
+async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, options, checkpoint = null, range = {}) {
   const events = [];
-  const meta = {
+  const meta = checkpoint?.meta ? { ...checkpoint.meta } : {
     sourceFile: fileInfo.file,
     source: fileInfo.source,
     sessionFile: relative(fileInfo.root, fileInfo.file).replace(/\\/g, "/"),
@@ -435,13 +424,25 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
     id: null,
     inferredTitle: null,
   };
-  let currentModel = null;
-  let previousTotalUsage = null;
-  let lineNumber = 0;
-  const toolCounts = new Map();
-  const seenToolCallIds = new Set();
+  let currentModel = checkpoint?.currentModel || null;
+  let previousTotalUsage = checkpoint?.previousTotalUsage || null;
+  let lineNumber = checkpoint?.lineNumber || 0;
+  const toolCounts = new Map((checkpoint?.tools || []).map((tool) => [tool.name, { ...tool }]));
+  const seenToolCallIds = new Set(checkpoint?.seenToolCallIds || []);
 
-  const stream = createReadStream(fileInfo.file, { encoding: "utf8" });
+  if (range.end < range.start) {
+    return {
+      events,
+      tools: [...toolCounts.values()],
+      checkpoint: { meta, currentModel, previousTotalUsage, lineNumber, tools: [...toolCounts.values()], seenToolCallIds: [...seenToolCallIds] },
+    };
+  }
+  const stream = createReadStream(fileInfo.file, {
+    encoding: "utf8",
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(Number.isFinite(range.start) ? { start: range.start } : {}),
+    ...(Number.isFinite(range.end) ? { end: range.end } : {}),
+  });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
 
   for await (const line of lines) {
@@ -524,7 +525,19 @@ async function parseSessionFile(fileInfo, sessionIndex, threadStateIndex, option
     });
   }
 
-  return { events, tools: [...toolCounts.values()] };
+  const tools = [...toolCounts.values()];
+  return {
+    events,
+    tools,
+    checkpoint: {
+      meta,
+      currentModel,
+      previousTotalUsage,
+      lineNumber,
+      tools,
+      seenToolCallIds: [...seenToolCallIds],
+    },
+  };
 }
 
 function blankAggregate(extra = {}) {
@@ -612,14 +625,34 @@ export async function loadCodexReports(options = {}) {
   const parseCache = options.fileCache || null;
   const nestedResults = await Promise.all(
     files.map((file) => {
-      const parse = () => parseSessionFile(file, sessionIndex, threadStateIndex, options);
-      return parseCache
-        ? parseCache.get("codex", file.file, cacheContext(file, options), parse)
-        : parse();
+      const parse = (range) => parseSessionFile(file, sessionIndex, threadStateIndex, options, null, range);
+      if (!parseCache?.getIncremental) return parseCache
+        ? parseCache.get("codex", file.file, cacheContext(file, options), () => parse({}))
+        : parse({});
+      return parseCache.getIncremental("codex", file.file, cacheContext(file, options), {
+        full: parse,
+        append: async (previous, range) => {
+          if (!previous?.checkpoint) return parse({ start: 0, end: range.end });
+          const delta = await parseSessionFile(
+            file,
+            sessionIndex,
+            threadStateIndex,
+            options,
+            previous.checkpoint,
+            range,
+          );
+          return {
+            events: [...previous.events, ...delta.events],
+            tools: delta.tools,
+            checkpoint: delta.checkpoint,
+          };
+        },
+      });
     }),
   );
   parseCache?.prune("codex", files.map((file) => file.file));
-  const events = nestedResults.flatMap((r) => r.events).sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+  const events = nestedResults.flatMap((r) => r.events);
+  if (!options.rawOnly) events.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
   const rawTools = nestedResults.flatMap((r) => r.tools);
   const toolMap = new Map();
   for (const t of rawTools) {
@@ -630,6 +663,32 @@ export async function loadCodexReports(options = {}) {
     }
   }
   const tools = [...toolMap.values()].sort((a, b) => b.count - a.count);
+  const tool = {
+    source: "codex-jsonl",
+    version: "native",
+    filesRead: files.length,
+    sessionIndexEntries: sessionIndex.size,
+    threadStateEntries: threadStateIndex.size,
+    dataRoots: homes.flatMap((home) => [
+      join(home, "sessions"),
+      join(home, "archived_sessions"),
+      join(home, "session_index.jsonl"),
+      join(home, "state_5.sqlite"),
+    ]),
+    codexHomes: homes,
+    parser: basename(new URL(import.meta.url).pathname),
+    parserDir: dirname(new URL(import.meta.url).pathname),
+  };
+  if (options.rawOnly) {
+    return {
+      daily: { daily: [], totals: blankAggregate() },
+      sessions: { sessions: [], totals: blankAggregate() },
+      projects: { projects: [], totals: blankAggregate() },
+      events,
+      skills: tools,
+      tool,
+    };
+  }
   const totals = buildTotals(events);
 
   const daily = sortByDate(buildRows(
@@ -684,21 +743,6 @@ export async function loadCodexReports(options = {}) {
     projects: { projects, totals },
     events,
     skills: tools,
-    tool: {
-      source: "codex-jsonl",
-      version: "native",
-      filesRead: files.length,
-      sessionIndexEntries: sessionIndex.size,
-      threadStateEntries: threadStateIndex.size,
-      dataRoots: homes.flatMap((home) => [
-        join(home, "sessions"),
-        join(home, "archived_sessions"),
-        join(home, "session_index.jsonl"),
-        join(home, "state_5.sqlite"),
-      ]),
-      codexHomes: homes,
-      parser: basename(new URL(import.meta.url).pathname),
-      parserDir: dirname(new URL(import.meta.url).pathname),
-    },
+    tool,
   };
 }

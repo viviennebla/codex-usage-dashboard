@@ -114,7 +114,7 @@ export async function runSkillsCli(options, dependencies = {}) {
       return 0;
     }
     if (!options.yes && dependencies.confirm) {
-      const confirmed = await dependencies.confirm("Apply these Skill bundle changes?");
+      const confirmed = await dependencies.confirm("Apply these Skill bundle changes?", plan);
       if (!confirmed) {
         if (options.json) writeResult({ applied: false, cancelled: true, plan }, true, output);
         else writeResult("Pull cancelled.", false, output);

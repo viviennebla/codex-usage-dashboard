@@ -10,7 +10,7 @@ export async function mergeWithDeviceStates(snapshot, options = {}) {
   const remoteDevices = options.remoteDevices
     ? new Map(options.remoteDevices)
     : await readDeviceStates(options.stateDir || "state");
-  const syncState = options.syncState || await readSyncState();
+  const syncState = options.syncState || await readSyncState(options.stateDir || "state");
   for (const deviceId of remoteDevices.keys()) {
     if (isDeviceSyncDisabled(syncState, deviceId)) remoteDevices.delete(deviceId);
   }

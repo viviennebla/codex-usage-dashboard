@@ -1446,6 +1446,8 @@ function renderTrend(snapshot) {
   drawTrend(selectedTrendSnapshot(snapshot));
 }
 
+let backgroundRefreshPoll = null;
+
 async function refresh(rebuild = false) {
   $("meta").textContent = rebuild ? "Refreshing data…" : "Loading…";
   const response = await fetch(rebuild ? "/api/refresh" : "/api/snapshot", {
@@ -1454,7 +1456,15 @@ async function refresh(rebuild = false) {
   });
   if (!response.ok) throw new Error(await response.text());
   const snapshot = await response.json();
+  const wasRefreshing = Boolean(latestSnapshot?.cache_refreshing);
+  const unchanged = !rebuild && latestSnapshot?.generated_at === snapshot.generated_at;
   latestSnapshot = snapshot;
+  clearTimeout(backgroundRefreshPoll);
+  backgroundRefreshPoll = snapshot.cache_refreshing
+    ? setTimeout(() => refresh().catch(() => {}), 1000)
+    : null;
+  if (wasRefreshing && !snapshot.cache_refreshing) refreshLimitsOnly().catch(() => {});
+  if (unchanged) return;
 
   renderMetrics(snapshot);
   drawHeatmap(snapshot);
@@ -1775,9 +1785,11 @@ window.addEventListener("resize", () => {
   }, 200);
 });
 
-refresh().catch((err) => {
-  $("meta").textContent = err.message;
-});
+refresh()
+  .then(() => refreshLimitsOnly().catch(() => {}))
+  .catch((err) => {
+    $("meta").textContent = err.message;
+  });
 
 /* ── Sources Panel ───────────────────────── */
 

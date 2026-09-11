@@ -24,7 +24,7 @@
 - **双 Agent 数据源**：解析 Codex `sessions` / `archived_sessions` 和 Claude Code `projects` 下的 JSONL 日志。
 - **多环境识别**：自动识别 Windows、macOS、Linux 和 Windows 上的 WSL Codex Home。
 - **交互式 Web 仪表盘**：包含关键指标、趋势图、月度热力图、模型拆分、项目排行、会话排行、环境统计、Skills & MCP 统计。
-- **快照缓存**：Web 服务会缓存最近快照，必要时自动刷新；也可以手动刷新。
+- **快照与解析缓存**：Web/TUI 会立即显示已有快照并在后台刷新；运行期间只解析 JSONL 新增字节，检测到截断或改写时自动回退到全量解析。
 - **多设备同步**：支持 push / pull 快照到一个兼容的 Dashboard Server，并在页面中合并远端设备数据。
 - **Skills 同步**：支持注册 Skills 源目录、生成 bundle、推送/拉取远端 bundle，并为 Codex 生成安装提示词。
 - **费用估算**：内置部分模型价格表，可在 `~/.codex-usage.json` 中覆盖或关闭。
@@ -40,9 +40,15 @@
 
 ```bash
 node src/cli.js
+# 或
+npm run cli
 ```
 
-无参数启动会打开交互菜单，可查看/推拉 usage、管理 Skills，以及一次性保存同步服务器和 token。后续命令会自动读取保存的连接信息，不必重复传入多个参数。
+这两个入口都会打开持续运行的彩色全屏终端菜单：程序进入备用屏幕，切换子菜单时整页重绘，退出后恢复原来的终端内容。使用 `↑` / `↓` 移动高亮项，按 Enter 进入，按 Esc 返回；操作完成后按 Enter 回到主菜单。在主菜单选择 `Exit` 或按 Esc 会恢复终端并立即结束进程。菜单中可查看/推拉 usage、管理 Skills，以及一次性保存同步服务器和 token。后续命令会自动读取保存的连接信息，不必重复传入多个参数。设置 `NO_COLOR=1` 可以关闭 ANSI 颜色，`FORCE_COLOR=1` 可以强制开启。
+
+首次启动时，如果发现尚未注册且包含 JSONL 日志的默认 Codex / Claude 数据目录，TUI 会列出路径和文件数，确认后才把这些目录写入配置并开始统计。Usage 和 Skill Bundle 的 Push/Pull 页面会依次显示 `Working`、`Done`、`Done with warnings` 或 `Failed` 状态。
+
+Usage 读取采用 stale-while-revalidate：存在 `state/latest.json` 时，Web 和 TUI 会先显示已有数据，再在后台检查并刷新过期快照。JSONL 文件缓存按大小、修改时间和尾部签名校验；纯追加文件只解析新增字节，文件被截断、覆盖或筛选条件变化时会自动执行完整解析。显式 Refresh 和 Push 仍等待最新快照完成，以保证写出或上传的数据一致；退出 TUI 会取消仍在运行的后台扫描。Web 的实时 Rate Limits 通过独立的 `/api/limits` 操作刷新，TUI 使用 JSONL 中最近记录的限制信息，两者都不再阻塞 usage 快照生成。
 
 启动 Web 仪表盘：
 
@@ -70,6 +76,7 @@ npm start
 npm run web
 npm run snapshot
 npm run cli
+npm run summary
 npm run configure
 npm run push
 npm run pull
@@ -81,10 +88,11 @@ npm run register -- --path /path/to/.codex --type codex --label work
 | 命令 | 说明 |
 | --- | --- |
 | `node src/cli.js` | 打开交互式终端菜单（推荐） |
+| `node src/cli.js cli` / `npm run cli` | 打开同一个交互式终端菜单 |
 | `node src/cli.js configure` | 交互式保存同步服务器和 token；token 输入不回显 |
 | `node src/cli.js web [--port 34777] [--bind 127.0.0.1] [--no-wsl]` | 启动本地 Web 仪表盘 |
 | `node src/cli.js snapshot [--since YYYYMMDD] [--until YYYYMMDD] [--state state/latest.json]` | 生成快照 JSON |
-| `node src/cli.js cli [--json] [--since YYYYMMDD] [--until YYYYMMDD] [--no-wsl]` | 在终端打印本机与已同步设备的聚合摘要；配置过服务器时会先拉取远端 |
+| `node src/cli.js summary [--json] [--since YYYYMMDD] [--until YYYYMMDD] [--no-wsl]` | 非交互地打印本机与已同步设备的聚合摘要；只读取本地副本，不会隐式拉取远端 |
 | `node src/cli.js push [--device <name>]` | 使用已保存连接把本机快照推送到同步服务器 |
 | `node src/cli.js pull` | 使用已保存连接从同步服务器拉取其他设备快照 |
 | `node src/cli.js register --path <dir> --type codex\|claude\|skills [--label <name>]` | 注册自定义数据目录或 Skills 源目录 |
@@ -149,7 +157,7 @@ node src/cli.js register --path ~/agent-skills --type skills --label "Shared Ski
 启动 `web` 后，本地服务会提供静态页面和 JSON API。主要页面能力包括：
 
 - 顶部指标：今日 token、今日费用、缓存命中率、主速率限制。
-- Rate Limits：从 `codex app-server --stdio` 读取当前 Codex 账号速率限制。
+- Rate Limits：Web 在 usage 首屏之后独立从 `codex app-server --stdio` 读取当前账号限制，不阻塞快照显示。
 - Token Trend：最近使用趋势，可在总览和不同环境之间切换。
 - Activity：月度热力图。
 - Model Breakdown：按模型展示 token 和请求次数。
@@ -210,11 +218,11 @@ node src/cli.js pull
 node src/cli.js web
 ```
 
-无头服务器可以在一次命令中先拉取、合并并打印所有设备的终端摘要，不需要启动 Web 服务：
+无头服务器可以读取本地副本、合并并打印所有设备的终端摘要，不需要启动 Web 服务。需要更新远端副本时请先显式运行 `node src/cli.js pull`：
 
 ```bash
-node src/cli.js cli
-node src/cli.js cli --json
+node src/cli.js summary
+node src/cli.js summary --json
 ```
 
 合并策略：
@@ -401,7 +409,8 @@ public/
   app.js           前端渲染、图表、同步和 Sources 管理
   styles.css       样式
 src/
-  cli.js           CLI、Web 服务和 API 路由
+  cli.js           CLI、Web 服务和 API 路由适配器
+  application-service.js  usage 快照、缓存策略、设备同步和数据源导入服务边界
   interactive-cli.js  交互菜单和安全输入
   skills-cli.js    无头 Skills 子命令
   headless.js      无头模式的多设备聚合
@@ -439,7 +448,7 @@ node src/cli.js snapshot
 终端摘要：
 
 ```bash
-node src/cli.js cli
+node src/cli.js summary
 ```
 
 检查帮助：

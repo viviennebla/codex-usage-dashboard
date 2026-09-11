@@ -4,6 +4,7 @@ import { homedir, hostname, platform } from "node:os";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { normalizePathKey, stableId } from "./sources.js";
+import { dayKey } from "./time.js";
 
 const DATE_ONLY = /^(\d{4})-?(\d{2})-?(\d{2})$/;
 
@@ -32,18 +33,6 @@ function withinFilters(timestamp, options) {
   if (since && ms < since) return false;
   if (until && ms > until) return false;
   return true;
-}
-
-function dayKey(timestamp, timezone) {
-  const tz = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(timestamp));
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
 }
 
 async function exists(path) {
@@ -241,15 +230,23 @@ function cleanProjectName(projectPath) {
  * Parse a single Claude Code JSONL file and extract token usage events
  * and skill (tool_use) calls.
  */
-async function parseClaudeFile(fileInfo, options) {
+async function parseClaudeFile(fileInfo, options, checkpoint = null, range = {}) {
   const events = [];
   // Track message IDs to deduplicate sidechain replays
-  const seenMessageIds = new Set();
-  let threadName = null;
-  let threadNameSource = null;
-  let lineNumber = 0;
+  const seenMessageIds = new Set(checkpoint?.seenMessageIds || []);
+  let threadName = checkpoint?.threadName || null;
+  let threadNameSource = checkpoint?.threadNameSource || null;
+  let lineNumber = checkpoint?.lineNumber || 0;
 
-  const stream = createReadStream(fileInfo.file, { encoding: "utf8" });
+  if (range.end < range.start) {
+    return { events, checkpoint: { seenMessageIds: [...seenMessageIds], threadName, threadNameSource, lineNumber } };
+  }
+  const stream = createReadStream(fileInfo.file, {
+    encoding: "utf8",
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(Number.isFinite(range.start) ? { start: range.start } : {}),
+    ...(Number.isFinite(range.end) ? { end: range.end } : {}),
+  });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
 
   for await (const line of lines) {
@@ -347,7 +344,15 @@ async function parseClaudeFile(fileInfo, options) {
     });
   }
 
-  return events;
+  return {
+    events,
+    checkpoint: {
+      seenMessageIds: [...seenMessageIds],
+      threadName,
+      threadNameSource,
+      lineNumber,
+    },
+  };
 }
 
 // ── Aggregation helpers (compatible with ccusage.js) ──
@@ -473,20 +478,49 @@ export async function loadClaudeReports(options = {}) {
 
   const files = await collectClaudeFiles(roots, options.sourceLabels || new Map());
   const parseCache = options.fileCache || null;
-  const nestedEvents = await Promise.all(
+  const nestedResults = await Promise.all(
     files.map((file) => {
-      const parse = () => parseClaudeFile(file, options);
-      return parseCache
-        ? parseCache.get("claude", file.file, cacheContext(file, options), parse)
-        : parse();
+      const parse = (range) => parseClaudeFile(file, options, null, range);
+      if (!parseCache?.getIncremental) return parseCache
+        ? parseCache.get("claude", file.file, cacheContext(file, options), () => parse({}))
+        : parse({});
+      return parseCache.getIncremental("claude", file.file, cacheContext(file, options), {
+        full: parse,
+        append: async (previous, range) => {
+          if (!previous?.checkpoint) return parse({ start: 0, end: range.end });
+          const delta = await parseClaudeFile(file, options, previous.checkpoint, range);
+          return {
+            events: [...previous.events, ...delta.events],
+            checkpoint: delta.checkpoint,
+          };
+        },
+      });
     }),
   );
   parseCache?.prune("claude", files.map((file) => file.file));
-  const allRaw = nestedEvents.flat().sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+  const allRaw = nestedResults.flatMap((result) => result.events);
+  if (!options.rawOnly) allRaw.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
 
   // Separate skill events from usage events
   const skills = extractSkillCalls(allRaw);
   const events = allRaw.filter((ev) => !ev.skill);
+  const tool = {
+    source: "claude",
+    version: "native",
+    filesRead: files.length,
+    dataRoots: roots.flatMap((root) => [join(root, "projects")]),
+    codexHomes: roots,
+  };
+  if (options.rawOnly) {
+    return {
+      daily: { daily: [], totals: blankAggregate() },
+      sessions: { sessions: [], totals: blankAggregate() },
+      projects: { projects: [], totals: blankAggregate() },
+      events,
+      skills,
+      tool,
+    };
+  }
 
   const totals = buildTotals(events);
 
@@ -545,12 +579,6 @@ export async function loadClaudeReports(options = {}) {
     projects: { projects, totals },
     events,
     skills,
-    tool: {
-      source: "claude",
-      version: "native",
-      filesRead: files.length,
-      dataRoots: roots.flatMap((root) => [join(root, "projects")]),
-      codexHomes: roots,
-    },
+    tool,
   };
 }

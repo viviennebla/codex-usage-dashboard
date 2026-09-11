@@ -103,6 +103,7 @@ test("interactive confirmation applies a skill pull without --yes", async (t) =>
     skills: [{ name: "demo", source_markdown: "common/demo.md" }],
   };
   let confirmations = 0;
+  let confirmationPlan;
   const code = await runSkillsCli({
     skillsAction: "pull",
     server: "https://sync.example",
@@ -111,12 +112,14 @@ test("interactive confirmation applies a skill pull without --yes", async (t) =>
     config: { directories: [] },
     fetchImpl: async () => new Response(JSON.stringify(bundle), { status: 200 }),
     output: () => {},
-    confirm: async () => {
+    confirm: async (_message, plan) => {
       confirmations += 1;
+      confirmationPlan = plan;
       return true;
     },
   });
   assert.equal(code, 0);
   assert.equal(confirmations, 1);
+  assert.equal(confirmationPlan.target_dir, root);
   assert.equal(await readFile(join(root, "common", "demo.md"), "utf8"), "# Demo\n");
 });

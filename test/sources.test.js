@@ -17,3 +17,18 @@ test("CODEX_HOME entries are included in resolved Codex homes", async () => {
     else process.env.CODEX_HOME = previous;
   }
 });
+
+test("a confirmed registered Codex directory loads without CODEX_HOME", async () => {
+  const previous = process.env.CODEX_HOME;
+  delete process.env.CODEX_HOME;
+  try {
+    assert.deepEqual(await resolveCodexHomes([
+      { path: "/home/test/.codex", type: "codex" },
+    ], { includeDefaults: false, noWsl: true }), [
+      "/home/test/.codex",
+    ]);
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous;
+  }
+});

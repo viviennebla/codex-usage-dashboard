@@ -2,7 +2,11 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { hostname } from "node:os";
 
-const SYNC_FILE = "state/sync.json";
+const DEFAULT_STATE_DIR = "state";
+
+function syncFile(stateDir = DEFAULT_STATE_DIR) {
+  return join(stateDir || DEFAULT_STATE_DIR, "sync.json");
+}
 
 function snapshotTime(snapshot) {
   const value = Date.parse(snapshot?.generated_at || "");
@@ -30,9 +34,9 @@ export function shouldFetchRemoteSnapshot(existing, remoteDevice) {
 /**
  * Read the current sync state.
  */
-export async function readSyncState() {
+export async function readSyncState(stateDir = DEFAULT_STATE_DIR) {
   try {
-    const raw = await readFile(SYNC_FILE, "utf8");
+    const raw = await readFile(syncFile(stateDir), "utf8");
     const parsed = JSON.parse(raw);
     return {
       lastSyncedAt: null,
@@ -52,9 +56,10 @@ export async function readSyncState() {
 /**
  * Write the sync state to disk.
  */
-export async function writeSyncState(state) {
-  await mkdir(dirname(SYNC_FILE), { recursive: true });
-  await writeFile(SYNC_FILE, JSON.stringify(state, null, 2) + "\n", "utf8");
+export async function writeSyncState(state, stateDir = DEFAULT_STATE_DIR) {
+  const path = syncFile(stateDir);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(state, null, 2) + "\n", "utf8");
 }
 
 export function updateDeviceSyncPreference(state, deviceId, enabled, details = {}) {
@@ -81,15 +86,15 @@ export function isDeviceSyncDisabled(state, deviceId) {
   return Boolean(state?.disabledDevices?.[deviceId]);
 }
 
-export async function setDeviceSyncEnabled(deviceId, enabled, details = {}) {
-  const state = await readSyncState();
+export async function setDeviceSyncEnabled(deviceId, enabled, details = {}, stateDir = DEFAULT_STATE_DIR) {
+  const state = await readSyncState(stateDir);
   const next = updateDeviceSyncPreference(state, deviceId, enabled, details);
-  await writeSyncState(next);
+  await writeSyncState(next, stateDir);
   return next;
 }
 
-export async function recordSyncStatus(kind, status, details = {}) {
-  const state = await readSyncState();
+export async function recordSyncStatus(kind, status, details = {}, stateDir = DEFAULT_STATE_DIR) {
+  const state = await readSyncState(stateDir);
   const now = new Date().toISOString();
   state.server = details.server || state.server || null;
   state.lastStatusAt = now;
@@ -106,7 +111,7 @@ export async function recordSyncStatus(kind, status, details = {}) {
     state.lastPullError = details.error || null;
     if (status === "success" || status === "partial") state.lastPullAt = now;
   }
-  await writeSyncState(state);
+  await writeSyncState(state, stateDir);
   return state;
 }
 
@@ -120,16 +125,19 @@ export async function recordSyncStatus(kind, status, details = {}) {
  * 4. Record sync metadata in state/sync.json.
  *
  * @param {string} serverUrl e.g. "http://your-server:34777"
- * @returns {{ synced: string[], skipped: {deviceId: string, reason: string}[], failed: {deviceId: string, error: string}[], message: string }}
+ * @returns {{ ok: boolean, status: string, synced: string[], skipped: {deviceId: string, reason: string}[], failed: {deviceId: string, error: string}[], message: string }}
  */
-export async function pullFromServer(serverUrl) {
+export async function pullFromServer(serverUrl, options = {}) {
+  const stateDir = options.stateDir || DEFAULT_STATE_DIR;
+  const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {};
   const baseUrl = String(serverUrl).replace(/\/+$/, "");
   const synced = [];
   const skipped = [];
   const failed = [];
   const syncedDeviceMeta = [];
-  await recordSyncStatus("pull", "running", { server: baseUrl, message: "Pulling from server..." });
-  const syncState = await readSyncState();
+  await recordSyncStatus("pull", "running", { server: baseUrl, message: "Pulling from server..." }, stateDir);
+  const syncState = await readSyncState(stateDir);
+  onProgress({ status: "running", kind: "pull", message: "Pulling from server..." });
 
   // 1. Fetch device list
   let devices;
@@ -137,44 +145,48 @@ export async function pullFromServer(serverUrl) {
     const res = await fetch(`${baseUrl}/api/devices`);
     if (!res.ok) {
       const message = `Failed to fetch device list: HTTP ${res.status}`;
-      await recordSyncStatus("pull", "failed", { server: baseUrl, error: message });
-      return { synced, skipped, failed, message };
+      await recordSyncStatus("pull", "failed", { server: baseUrl, error: message }, stateDir);
+      onProgress({ kind: "pull", status: "failed", message, synced, skipped, failed });
+      return { ok: false, status: "failed", synced, skipped, failed, message };
     }
     devices = await res.json();
   } catch (err) {
     const message = `Failed to connect to ${baseUrl}: ${err.message}`;
-    await recordSyncStatus("pull", "failed", { server: baseUrl, error: message });
-    return { synced, skipped, failed, message };
+    await recordSyncStatus("pull", "failed", { server: baseUrl, error: message }, stateDir);
+    onProgress({ kind: "pull", status: "failed", message, synced, skipped, failed });
+    return { ok: false, status: "failed", synced, skipped, failed, message };
   }
 
   if (!Array.isArray(devices)) {
     const message = "Remote server returned an invalid device list";
-    await recordSyncStatus("pull", "failed", { server: baseUrl, error: message });
-    return { synced, skipped, failed, message };
+    await recordSyncStatus("pull", "failed", { server: baseUrl, error: message }, stateDir);
+    onProgress({ kind: "pull", status: "failed", message, synced, skipped, failed });
+    return { ok: false, status: "failed", synced, skipped, failed, message };
   }
 
   // 2. Clean up local orphan snapshots (not on server anymore)
   const remoteIds = new Set(devices.map((d) => d.device_id));
   const { readDeviceStates } = await import("./state.js");
-  const localDevices = await readDeviceStates();
+  const localDevices = await readDeviceStates(stateDir);
   for (const [localId] of localDevices) {
     if (localId === hostname()) continue; // keep self
     if (isDeviceSyncDisabled(syncState, localId)) {
       const { removeDeviceState } = await import("./state.js");
-      await removeDeviceState(localId);
+      await removeDeviceState(localId, stateDir);
       continue;
     }
     if (!remoteIds.has(localId)) {
       const { removeDeviceState } = await import("./state.js");
-      await removeDeviceState(localId);
+      await removeDeviceState(localId, stateDir);
       console.log(`[sync] removed orphaned local cache: ${localId}`);
     }
   }
 
   if (devices.length === 0) {
     const message = "No remote devices found";
-    await recordSyncStatus("pull", "success", { server: baseUrl, message });
-    return { synced, skipped, failed, message };
+    await recordSyncStatus("pull", "success", { server: baseUrl, message }, stateDir);
+    onProgress({ kind: "pull", status: "success", message, synced, skipped, failed });
+    return { ok: true, status: "success", synced, skipped, failed, message };
   }
 
   // 3. Fetch changed device snapshots only (skip self)
@@ -210,7 +222,7 @@ export async function pullFromServer(serverUrl) {
       // Write to state/<deviceId>.json (inline to avoid importing writeDeviceState
       // which would also store _device_id/_device_name — we import it for reuse)
       const { writeDeviceState } = await import("./state.js");
-      await writeDeviceState(deviceId, deviceName, snapshot);
+      await writeDeviceState(deviceId, deviceName, snapshot, stateDir);
 
       // Compute today's tokens from the snapshot
       const todayTokens = snapshot.today?.totalTokens || 0;
@@ -223,14 +235,14 @@ export async function pullFromServer(serverUrl) {
   }
 
   if (syncedDeviceMeta.length) {
-    const syncState = await readSyncState();
+    const syncState = await readSyncState(stateDir);
     const now = new Date().toISOString();
     syncState.lastSyncedAt = now;
     syncState.devices = syncState.devices || {};
     for (const { deviceId, todayTokens } of syncedDeviceMeta) {
       syncState.devices[deviceId] = { lastSyncedAt: now, todayTokens };
     }
-    await writeSyncState(syncState);
+    await writeSyncState(syncState, stateDir);
   }
 
   const messageParts = [];
@@ -246,7 +258,9 @@ export async function pullFromServer(serverUrl) {
   const error = failed.length > 0
     ? failed.map((f) => `${f.deviceId}: ${f.error}`).join("; ")
     : null;
-  await recordSyncStatus("pull", status, { server: baseUrl, message, error });
+  await recordSyncStatus("pull", status, { server: baseUrl, message, error }, stateDir);
 
-  return { synced, skipped, failed, message };
+  onProgress({ status, kind: "pull", message, synced, skipped, failed });
+
+  return { ok: failed.length === 0, status, synced, skipped, failed, message };
 }

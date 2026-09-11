@@ -1,29 +1,11 @@
 import { aggregateEvents } from "./loader.js";
+import { dayKey } from "./time.js";
 
 const SNAPSHOT_SCHEMA_VERSION = "0.2";
 
 function todayKey(now = new Date()) {
-  // Use local timezone so "today" matches the daily row grouping
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-  const values = Object.fromEntries(parts.map((p) => [p.type, p.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
-function dayKey(timestamp, timezone) {
-  const tz = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(timestamp));
-  const values = Object.fromEntries(parts.map((p) => [p.type, p.value]));
-  return `${values.year}-${values.month}-${values.day}`;
+  // Use local timezone so "today" matches the daily row grouping.
+  return dayKey(now);
 }
 
 function number(value) {
@@ -104,9 +86,17 @@ function addDerived(row) {
 }
 
 export function latestEventWithRateLimits(events) {
-  return [...(events || [])]
-    .filter((event) => event.rateLimits)
-    .sort((a, b) => (isoMs(b.timestamp) ?? 0) - (isoMs(a.timestamp) ?? 0))[0] || null;
+  let latest = null;
+  let latestMs = -Infinity;
+  for (const event of events || []) {
+    if (!event.rateLimits) continue;
+    const timestamp = isoMs(event.timestamp) ?? -Infinity;
+    if (timestamp > latestMs) {
+      latest = event;
+      latestMs = timestamp;
+    }
+  }
+  return latest;
 }
 
 function limitStatus(limits) {
@@ -119,14 +109,6 @@ function limitStatus(limits) {
   return { label: "ok", code: 0 };
 }
 
-function tokensSince(events, sessionId, generatedAt, minutes) {
-  const threshold = generatedAt.getTime() - minutes * 60 * 1000;
-  return (events || [])
-    .filter((event) => event.sessionId === sessionId)
-    .filter((event) => (isoMs(event.timestamp) ?? 0) >= threshold)
-    .reduce((sum, event) => sum + tokenTotal(event), 0);
-}
-
 function buildBurnRate(events, activeSession, generatedAt) {
   if (!activeSession) {
     return {
@@ -137,8 +119,17 @@ function buildBurnRate(events, activeSession, generatedAt) {
       tokens_per_minute_60m: 0,
     };
   }
-  const tokens15 = tokensSince(events, activeSession.sessionId, generatedAt, 15);
-  const tokens60 = tokensSince(events, activeSession.sessionId, generatedAt, 60);
+  const threshold15 = generatedAt.getTime() - 15 * 60 * 1000;
+  const threshold60 = generatedAt.getTime() - 60 * 60 * 1000;
+  let tokens15 = 0;
+  let tokens60 = 0;
+  for (const event of events || []) {
+    if (event.sessionId !== activeSession.sessionId) continue;
+    const timestamp = isoMs(event.timestamp) ?? 0;
+    const tokens = tokenTotal(event);
+    if (timestamp >= threshold60) tokens60 += tokens;
+    if (timestamp >= threshold15) tokens15 += tokens;
+  }
   return {
     basis: "latest_session",
     tokens_15m: tokens15,
@@ -252,17 +243,20 @@ export function buildSnapshot(reports, options = {}) {
   );
   const projectRows = (reports.projects?.projects || []).map(addDerived);
   const todayDate = todayKey(generatedAt);
-  const todayEvents = events.filter(
+  const aggregatedToday = dailyRows.find((row) => row.date === todayDate) || null;
+  const aggregatedTotals = reports.daily.totals || reports.sessions.totals || null;
+  const aggregatesFromEvents = reports.tool?.aggregatesFromEvents === true;
+  const todayEvents = aggregatesFromEvents ? [] : events.filter(
     (event) => dayKey(event.timestamp, options.timezone) === todayDate,
   );
-  const todayModelUsage = aggregateEvents(todayEvents);
-  const totalModelUsage = aggregateEvents(events);
+  const todayModelUsage = aggregatesFromEvents ? aggregatedToday : aggregateEvents(todayEvents);
+  const totalModelUsage = aggregatesFromEvents ? aggregatedTotals : aggregateEvents(events);
   const today = withModelUsage(
-    dailyRows.find((row) => row.date === todayDate),
+    aggregatedToday,
     todayModelUsage,
   );
   const totals = withModelUsage(
-    reports.daily.totals || reports.sessions.totals || null,
+    aggregatedTotals,
     totalModelUsage,
   );
   const recentDays = dailyRows.slice(-35); // compact trend window

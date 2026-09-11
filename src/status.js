@@ -40,6 +40,15 @@ export function normalizeCodexStatusRateLimits(payload) {
   return limits;
 }
 
+export function preserveLoggedRateLimits(snapshot, error) {
+  const hasLoggedLimits = Boolean(snapshot?.limits?.primary || snapshot?.limits?.secondary);
+  return {
+    ...snapshot,
+    limit_source: hasLoggedLimits ? "codex_jsonl_stale" : "unavailable",
+    limit_error: error?.message || String(error || "Codex status API unavailable"),
+  };
+}
+
 export function readCodexStatusRateLimits(options = {}) {
   const timeoutMs = options.timeoutMs ?? 8000;
   const bin = options.bin || process.env.CODEX_USAGE_CODEX_BIN || "codex";

@@ -1,20 +1,12 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { hostname } from "node:os";
+import { pathToFileURL } from "node:url";
 
-import { loadAllReports } from "./loader.js";
 import { formatCli } from "./format.js";
-import { buildSnapshot } from "./snapshot.js";
-import {
-  DEFAULT_STATE_PATH,
-  writeStateFile,
-  readStateFile,
-  readDeviceStates,
-  writeDeviceState,
-  removeDeviceState,
-} from "./state.js";
 import { FileParseCache } from "./file-cache.js";
 import {
   addDirectory,
@@ -24,12 +16,10 @@ import {
   resolveSyncConnection,
   updateSyncConnection,
 } from "./config.js";
-import { pullFromServer, recordSyncStatus, setDeviceSyncEnabled } from "./sync.js";
-import { discoverSourceDiagnostics, inspectSource, sourceLabelMap } from "./sources.js";
+import { inspectSource, sourceLabelMap } from "./sources.js";
 import { CodexLimitsClient } from "./codex-limits.js";
-import { readCodexStatusRateLimits } from "./status.js";
 import { runSkillsCli } from "./skills-cli.js";
-import { mergeWithDeviceStates } from "./headless.js";
+import { createUsageService, SNAPSHOT_REFRESH_POLICIES } from "./application-service.js";
 import {
   configureConnection,
   createTerminalPrompter,
@@ -47,13 +37,16 @@ const MIME = {
   ".json": "application/json; charset=utf-8",
 };
 
+const cliFileCache = new FileParseCache();
+const usageService = createUsageService({ fileCache: cliFileCache });
+
 function parseArgs(argv) {
   const [command = "interactive", ...rawRest] = argv;
   const rest = [...rawRest];
   const options = {
     command,
-    state: DEFAULT_STATE_PATH,
-    stateDir: "state",
+    state: undefined,
+    stateDir: undefined,
     port: 34777,
     bind: "127.0.0.1",
   };
@@ -94,9 +87,10 @@ function help() {
 
 Usage:
   node src/cli.js                         Open the interactive terminal menu
+  node src/cli.js cli                     Alias for the interactive terminal menu
   node src/cli.js configure               Save the sync server and token
   node src/cli.js snapshot [--since YYYYMMDD] [--state state/latest.json]
-  node src/cli.js cli [--json] [--since YYYYMMDD] [--no-wsl]
+  node src/cli.js summary [--json] [--since YYYYMMDD] [--no-wsl]
   node src/cli.js web [--port 34777] [--bind 127.0.0.1] [--no-wsl]
   node src/cli.js push [--device <name>]
   node src/cli.js pull
@@ -106,9 +100,10 @@ Usage:
 
 Commands:
   interactive  Open the guided terminal menu (default).
+  cli          Open the guided terminal menu.
   configure    Save connection settings for CLI and Web use.
   snapshot  Write the canonical dashboard snapshot.
-  cli       Print a terminal summary from the snapshot.
+  summary   Print a non-interactive terminal summary from the snapshot.
   web       Start the local web dashboard.
   push      Push local snapshot to a remote dashboard server.
   pull      Pull snapshots from a remote dashboard server.
@@ -121,31 +116,7 @@ options and DASHBOARD_TOKEN still override saved values for automation.
 }
 
 async function createSnapshot(options) {
-  const reports = await loadAllReports(options);
-  const snapshot = await applyStatusLimits(buildSnapshot(reports, options));
-  await writeStateFile(snapshot, options.state);
-  return snapshot;
-}
-
-async function applyStatusLimits(snapshot) {
-  try {
-    const status = await readCodexStatusRateLimits({ timeoutMs: 5000 });
-    return {
-      ...snapshot,
-      limits: status.limits,
-      limit_updated_at: status.limit_updated_at,
-      limit_source: status.source,
-      limit_error: null,
-    };
-  } catch (error) {
-    return {
-      ...snapshot,
-      limits: null,
-      limit_updated_at: null,
-      limit_source: "unavailable",
-      limit_error: error?.message || "Codex status API unavailable",
-    };
-  }
+  return usageService.refreshSnapshot(options);
 }
 
 async function serveStatic(pathname) {
@@ -202,85 +173,49 @@ function sendError(res, status, message) {
   res.end(message);
 }
 
+export async function storeInboundDeviceSnapshot(body, service, options = {}) {
+  const deviceId = String(body.device_id).replace(/[^a-zA-Z0-9._-]/g, "_");
+  const deviceName = body.device_name || deviceId;
+  await service.writeDeviceState(deviceId, deviceName, body.snapshot, options);
+  return { ok: true, device_id: deviceId };
+}
+
 function startWeb(options) {
   const serverAuthToken = process.env.DASHBOARD_TOKEN || null;
-  const stateDir = options.stateDir || "state";
-  const maxSnapshotAgeMs = 5 * 60_000;
   const fileCache = new FileParseCache();
   const codexLimits = new CodexLimitsClient();
   const snapshotOptions = { ...options, fileCache };
+  const webUsageService = createUsageService(snapshotOptions, {
+    readCodexStatusRateLimits: async () => {
+      const live = await codexLimits.readRateLimits();
+      if (!live.limits) throw new Error("Codex status API returned no rate limits");
+      return {
+        limits: live.limits,
+        limit_updated_at: new Date().toISOString(),
+        source: "codex_status_api",
+      };
+    },
+  });
+  const stateDir = webUsageService.paths(snapshotOptions).stateDir;
   let localSnapshot = null;
-  let mergedSnapshot = null;
-  let refreshInFlight = null;
-  let lastSnapshotRefreshAt = 0;
-
-  function localDayKey(date = new Date()) {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(date);
-    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-    return `${values.year}-${values.month}-${values.day}`;
-  }
-
-  function needsNewDaySnapshot(snapshot) {
-    return snapshot?.today?.date !== localDayKey();
-  }
-
-  function invalidateMergedSnapshot() {
-    mergedSnapshot = null;
-  }
-
-  async function buildMergedSnapshot(snapshot) {
-    return mergeWithDeviceStates(snapshot, { stateDir });
-  }
 
   async function getCachedSnapshot() {
-    if (!localSnapshot) {
-      localSnapshot = await readStateFile(options.state);
-      lastSnapshotRefreshAt = Date.parse(localSnapshot?.generated_at || "") || 0;
-    }
-    if (!localSnapshot) return refreshDashboardSnapshot();
-    if (
-      needsNewDaySnapshot(localSnapshot) ||
-      Date.now() - lastSnapshotRefreshAt >= maxSnapshotAgeMs
-    ) return refreshDashboardSnapshot();
-    if (mergedSnapshot) return mergedSnapshot;
-    mergedSnapshot = await buildMergedSnapshot(localSnapshot);
-    return mergedSnapshot;
-  }
-
-  async function getCachedLocalSnapshot() {
-    if (!localSnapshot) {
-      localSnapshot = await readStateFile(options.state);
-      lastSnapshotRefreshAt = Date.parse(localSnapshot?.generated_at || "") || 0;
-    }
-    if (
-      !localSnapshot ||
-      needsNewDaySnapshot(localSnapshot) ||
-      Date.now() - lastSnapshotRefreshAt >= maxSnapshotAgeMs
-    ) return rebuildSnapshot();
-    return localSnapshot;
+    localSnapshot = await webUsageService.getLocalSnapshot(snapshotOptions, {
+      policy: SNAPSHOT_REFRESH_POLICIES.STALE_WHILE_REVALIDATE,
+    });
+    const snapshot = await webUsageService.getSnapshot(snapshotOptions, {
+      policy: SNAPSHOT_REFRESH_POLICIES.STALE_WHILE_REVALIDATE,
+    });
+    return { ...snapshot, cache_refreshing: webUsageService.cacheStatus(snapshotOptions).refreshing };
   }
 
   async function rebuildSnapshot() {
-    if (!refreshInFlight) {
-      refreshInFlight = (async () => {
-        localSnapshot = await createSnapshot(snapshotOptions);
-        lastSnapshotRefreshAt = Date.now();
-        invalidateMergedSnapshot();
-        return localSnapshot;
-      })().finally(() => {
-        refreshInFlight = null;
-      });
-    }
-    return refreshInFlight;
+    localSnapshot = await webUsageService.refreshSnapshot(snapshotOptions);
+    return localSnapshot;
   }
 
   async function refreshDashboardSnapshot() {
-    await rebuildSnapshot();
+    await webUsageService.refreshSnapshot(snapshotOptions);
     return getCachedSnapshot();
   }
 
@@ -339,12 +274,11 @@ function startWeb(options) {
           sendError(res, 400, "Missing snapshot in request body");
           return;
         }
-        const deviceId = String(body.device_id).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const result = await storeInboundDeviceSnapshot(body, webUsageService, snapshotOptions);
+        const deviceId = result.device_id;
         const deviceName = body.device_name || deviceId;
-        await writeDeviceState(deviceId, deviceName, body.snapshot, stateDir);
-        invalidateMergedSnapshot();
         console.log(`[push] received from ${deviceId} (${deviceName})`);
-        sendJson(res, 200, { ok: true, device_id: deviceId });
+        sendJson(res, 200, result);
         return;
       }
 
@@ -359,8 +293,7 @@ function startWeb(options) {
           sendError(res, 400, "Missing ?device= query parameter");
           return;
         }
-        await removeDeviceState(String(deviceId).replace(/[^a-zA-Z0-9._-]/g, "_"), stateDir);
-        invalidateMergedSnapshot();
+        await webUsageService.removeDeviceState(String(deviceId).replace(/[^a-zA-Z0-9._-]/g, "_"), snapshotOptions);
         console.log(`[push] removed device ${deviceId}`);
         sendJson(res, 200, { ok: true, removed: deviceId });
         return;
@@ -398,9 +331,7 @@ function startWeb(options) {
           sendError(res, 400, "Missing device ID");
           return;
         }
-        const { readStateFile } = await import("./state.js");
-        const filePath = join(stateDir, `${deviceId}.json`);
-        const snapshot = await readStateFile(filePath);
+        const snapshot = await webUsageService.readDeviceSnapshot(deviceId, snapshotOptions);
         if (!snapshot) {
           sendError(res, 404, `Device "${deviceId}" not found`);
           return;
@@ -444,10 +375,8 @@ function startWeb(options) {
           sendError(res, 400, "Missing 'server' in request body");
           return;
         }
-        const result = await pullFromServer(serverUrl);
-        invalidateMergedSnapshot();
-        const { readSyncState } = await import("./sync.js");
-        const syncState = await readSyncState();
+        const result = await webUsageService.pull({ ...snapshotOptions, server: serverUrl }, {});
+        const syncState = await webUsageService.syncState(snapshotOptions);
 
         console.log(`[sync] ${result.message}`);
         sendJson(res, 200, {
@@ -481,42 +410,26 @@ function startWeb(options) {
 
       // ── GET /api/limits ── fast rate-limit refresh
       if (req.method === "GET" && url.pathname === "/api/limits") {
-        try {
-          const live = await codexLimits.readRateLimits();
-          if (live.limits) {
-            const updatedAt = new Date().toISOString();
-            if (localSnapshot) {
-              localSnapshot.limits = live.limits;
-              localSnapshot.limit_updated_at = updatedAt;
-              localSnapshot.limit_source = "codex_status_api";
-              localSnapshot.limit_error = null;
-              invalidateMergedSnapshot();
-            }
-            sendJson(res, 200, {
-              ...live,
-              limit_updated_at: updatedAt,
-              generated_at: updatedAt,
-              source: "codex_status_api",
-              stale: false,
-              limit_age_hours: 0,
-            });
-            return;
-          }
-          sendError(res, 502, "Codex status API returned no rate limits");
-        } catch (error) {
-          if (localSnapshot) {
-            localSnapshot.limit_source = "unavailable";
-            localSnapshot.limit_error = error?.message || "Codex status API unavailable";
-          }
-          sendError(res, 502, `Codex status API unavailable: ${error?.message || "unknown error"}`);
+        const result = await webUsageService.refreshRateLimits(snapshotOptions);
+        localSnapshot = result.snapshot || localSnapshot;
+        if (!result.ok) {
+          sendError(res, 502, `Codex status API unavailable: ${result.error || "unknown error"}`);
+          return;
         }
+        sendJson(res, 200, {
+          limits: result.snapshot.limits,
+          limit_updated_at: result.snapshot.limit_updated_at,
+          generated_at: result.snapshot.limit_updated_at,
+          source: result.snapshot.limit_source,
+          stale: false,
+          limit_age_hours: 0,
+        });
         return;
       }
 
       // ── GET /api/sync-state ── return last push/pull times
       if (req.method === "GET" && url.pathname === "/api/sync-state") {
-        const { readSyncState } = await import("./sync.js");
-        const state = await readSyncState();
+        const state = await webUsageService.syncState(snapshotOptions);
         sendJson(res, 200, {
           server: state.server || null,
           lastPushAt: state.lastPushAt || null,
@@ -590,37 +503,13 @@ function startWeb(options) {
         const { server: serverUrl, token } = resolveSyncConnection(body || {}, config);
         const deviceId = body?.device || hostname();
         if (!serverUrl) { sendError(res, 400, "Missing 'server'"); return; }
-
-        const snapshot = await getCachedLocalSnapshot();
-        const remoteUrl = String(serverUrl).replace(/\/+$/, "");
-        const headers = { "content-type": "application/json" };
-        if (token) headers.authorization = `Bearer ${token}`;
-        await recordSyncStatus("push", "running", { server: remoteUrl, message: "Pushing local snapshot..." });
-
-        try {
-          const pushResp = await fetch(`${remoteUrl}/api/push`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ device_id: deviceId, device_name: deviceId, snapshot }),
-          });
-          if (!pushResp.ok) {
-            const error = `Remote server returned ${pushResp.status}: ${await pushResp.text()}`;
-            await recordSyncStatus("push", "failed", { server: remoteUrl, error });
-            sendError(res, pushResp.status, error);
-            return;
-          }
-          const result = await pushResp.json();
-
-          const syncState = await recordSyncStatus("push", "success", {
-            server: remoteUrl,
-            message: `Pushed as ${result.device_id}`,
-          });
-
-          console.log(`[push-to-remote] pushed to ${remoteUrl} as ${deviceId}`);
-          sendJson(res, 200, { ok: true, device_id: result.device_id, lastPushAt: syncState.lastPushAt });
-        } catch (err) {
-          await recordSyncStatus("push", "failed", { server: remoteUrl, error: err.message });
-          sendError(res, 502, `Cannot reach server: ${err.message}`);
+        const result = await webUsageService.push({ ...snapshotOptions, server: serverUrl, token, device: deviceId });
+        if (result.status === "success") {
+          const syncState = await webUsageService.syncState(snapshotOptions);
+          console.log(`[push-to-remote] pushed to ${serverUrl} as ${deviceId}`);
+          sendJson(res, 200, { ok: true, status: result.status, device_id: result.device_id, lastPushAt: syncState.lastPushAt });
+        } else {
+          sendError(res, result.httpStatus || 502, result.error || "Failed to push snapshot");
         }
         return;
       }
@@ -635,29 +524,21 @@ function startWeb(options) {
           return;
         }
         const remoteUrl = String(serverUrl).replace(/\/+$/, "");
-        try {
-          const resp = await fetch(`${remoteUrl}/api/snapshot/${encodeURIComponent(deviceId)}`);
-          if (!resp.ok) {
-            sendError(res, resp.status, `Remote error: ${resp.status}`);
-            return;
-          }
-          const snapshot = await resp.json();
-          await writeDeviceState(deviceId, deviceId, snapshot, stateDir);
-          invalidateMergedSnapshot();
-          console.log(`[sync-device] pulled ${deviceId}`);
-          sendJson(res, 200, { ok: true, device_id: deviceId });
-        } catch (err) {
-          sendError(res, 502, `Failed to fetch device: ${err.message}`);
+        const result = await webUsageService.pullDevice(deviceId, remoteUrl, snapshotOptions);
+        if (result.status !== "success") {
+          sendError(res, 502, result.error || "Failed to fetch device");
+          return;
         }
+        console.log(`[sync-device] pulled ${deviceId}`);
+        sendJson(res, 200, result);
         return;
       }
 
       // ── GET/POST/DELETE /api/local-devices ── manage local sync records
       if (url.pathname === "/api/local-devices") {
-        const { readSyncState } = await import("./sync.js");
-        const syncState = await readSyncState();
+        const syncState = await webUsageService.syncState(snapshotOptions);
         if (req.method === "GET") {
-          const devices = await readDeviceStates(stateDir);
+          const devices = await webUsageService.readDeviceStates(snapshotOptions);
           const managed = [...devices.values()]
             .filter((device) => device.deviceId !== hostname())
             .map((device) => ({
@@ -700,15 +581,14 @@ function startWeb(options) {
             sendError(res, 400, "The current device cannot be disabled");
             return;
           }
-          const devices = await readDeviceStates(stateDir);
+          const devices = await webUsageService.readDeviceStates(snapshotOptions);
           const existing = devices.get(deviceId);
-          await removeDeviceState(deviceId, stateDir);
-          await setDeviceSyncEnabled(deviceId, false, {
+          await webUsageService.removeDeviceState(deviceId, snapshotOptions);
+          await webUsageService.setDeviceSyncEnabled(deviceId, false, {
             deviceName: existing?.deviceName || deviceId,
             generatedAt: existing?.snapshot?.generated_at || null,
             totalTokens: existing?.snapshot?.totals?.totalTokens || 0,
-          });
-          invalidateMergedSnapshot();
+          }, snapshotOptions);
           sendJson(res, 200, { ok: true, device_id: deviceId, sync_enabled: false });
           return;
         }
@@ -721,8 +601,7 @@ function startWeb(options) {
             sendError(res, 400, "A valid device_id and sync_enabled=true are required");
             return;
           }
-          await setDeviceSyncEnabled(deviceId, true);
-          invalidateMergedSnapshot();
+          await webUsageService.setDeviceSyncEnabled(deviceId, true, {}, snapshotOptions);
           sendJson(res, 200, { ok: true, device_id: deviceId, sync_enabled: true });
           return;
         }
@@ -730,7 +609,7 @@ function startWeb(options) {
 
       // ── GET /api/devices ── list known devices
       if (url.pathname === "/api/devices") {
-        const devices = await readDeviceStates(stateDir);
+        const devices = await webUsageService.readDeviceStates(snapshotOptions);
         const list = [...devices.values()].map((d) => ({
           device_id: d.deviceId,
           device_name: d.deviceName,
@@ -751,11 +630,11 @@ function startWeb(options) {
           origin: "registered",
           addedAt: dir.addedAt || null,
         })));
-        const discovered = (await discoverSourceDiagnostics(dirs))
+        const discovered = (await webUsageService.discoverSources({ directories: dirs }))
           .filter((d) => d.status !== "missing"); // skip paths that don't exist
 
         // Include synced remote devices as sources (exclude self)
-        const devices = await readDeviceStates(stateDir);
+        const devices = await webUsageService.readDeviceStates(snapshotOptions);
         const localId = hostname();
         const remoteSources = [];
         for (const [deviceId, { deviceName, snapshot }] of devices) {
@@ -763,7 +642,7 @@ function startWeb(options) {
           remoteSources.push({
             path: deviceId,
             normalized_path: deviceId,
-            data_path: `state/${deviceId}.json`,
+            data_path: `${stateDir}/${deviceId}.json`,
             type: "remote",
             label: deviceName || deviceId,
             display_name: deviceName || deviceId,
@@ -790,7 +669,11 @@ function startWeb(options) {
         const body = await readRequestBody(req);
         if (!body || !body.path) { sendError(res, 400, "Missing path"); return; }
         const type = body.type === "claude" ? "claude" : body.type === "skills" ? "skills" : "codex";
-        const result = await addDirectory(body.path, type, body.label || null);
+        const result = await webUsageService.importSource({
+          path: body.path,
+          type,
+          label: body.label || null,
+        });
         const labels = sourceLabelMap(result.config.directories || []);
         const inspection = await inspectSource(body.path, type, labels);
         result.inspection = { ...inspection, origin: "registered" };
@@ -997,83 +880,39 @@ function startWeb(options) {
 
   server.listen(options.port, options.bind, () => {
     const devicesHint = serverAuthToken ? "multi-device push enabled" : "local-only (set DASHBOARD_TOKEN for push auth)";
-    console.log(`Codex Usage Dashboard: http://${options.bind}:${options.port}`);
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : options.port;
+    console.log(`Codex Usage Dashboard: http://${options.bind}:${port}`);
     console.log(`  ${devicesHint}`);
   });
+  return server;
 }
 
-async function pushSnapshot(options) {
-  const config = await readConfig();
-  const connection = resolveSyncConnection(options, config);
-  if (!connection.server) throw new Error("No sync server is configured; run `node src/cli.js configure` first");
-
-  const deviceId = options.device || hostname();
-  const token = connection.token;
-
+async function pushSnapshot(options, request = {}) {
   console.log(`Creating snapshot...`);
-  const snapshot = await createSnapshot(options);
-  console.log(`  Today: ${snapshot.today?.totalTokens?.toLocaleString("en-US") || 0} tokens`);
-
-  const serverUrl = String(connection.server).replace(/\/+$/, "");
-  const pushUrl = `${serverUrl}/api/push`;
-
-  console.log(`Pushing to ${pushUrl} as "${deviceId}"...`);
-
-  const headers = { "content-type": "application/json" };
-  if (token) {
-    headers.authorization = `Bearer ${token}`;
+  const result = await usageService.push(options, request);
+  if (result.status === "success") console.log(`Push OK — device "${result.device_id}" registered on server.`);
+  else {
+    console.error(`Push failed: ${result.error || "unknown error"}`);
+    if (request.setExitCode) process.exitCode = 1;
   }
-
-  let response;
-  try {
-    response = await fetch(pushUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        device_id: deviceId,
-        device_name: deviceId,
-        snapshot,
-      }),
-    });
-  } catch (err) {
-    console.error(`Push failed: ${err.message}`);
-    console.error(`  Is the server running at ${serverUrl} ?`);
-    process.exitCode = 1;
-    return;
-  }
-
-  if (!response.ok) {
-    console.error(`Push failed: HTTP ${response.status} — ${await response.text()}`);
-    process.exitCode = 1;
-    return;
-  }
-
-  const result = await response.json();
-  console.log(`Push OK — device "${result.device_id}" registered on server.`);
+  return result;
 }
 
-async function pullSnapshots(options) {
-  const config = await readConfig();
-  const { server } = resolveSyncConnection(options, config);
-  if (!server) throw new Error("No sync server is configured; run `node src/cli.js configure` first");
-  console.log(`Pulling from ${server}...`);
-  const result = await pullFromServer(server);
+async function pullSnapshots(options, request = {}) {
+  const result = await usageService.pull(options, request);
   console.log(result.message);
   for (const id of result.synced) console.log(`  OK  ${id}`);
   for (const failure of result.failed) console.log(`  FAIL  ${failure.deviceId} — ${failure.error}`);
+  if (request.setExitCode && result.status === "failed") process.exitCode = 1;
   return result;
 }
 
 async function showUsage(options) {
-  const config = await readConfig();
-  const { server } = resolveSyncConnection(options, config);
-  if (server) {
-    const result = await pullFromServer(server);
-    console.error(`[sync] ${result.message}`);
-    for (const failure of result.failed) console.error(`[sync] ${failure.deviceId}: ${failure.error}`);
-  }
-  const localSnapshot = await createSnapshot(options);
-  const snapshot = await mergeWithDeviceStates(localSnapshot, { stateDir: options.stateDir });
+  const policy = options.refreshPolicy || SNAPSHOT_REFRESH_POLICIES.FORCE;
+  const snapshot = await usageService.getSnapshot(options, {
+    policy,
+  });
   console.log(options.json ? JSON.stringify(snapshot, null, 2) : formatCli(snapshot));
   return snapshot;
 }
@@ -1118,16 +957,21 @@ async function registerDirectory(options) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
 
-  if (options.command === "interactive") {
+  if (options.command === "interactive" || options.command === "cli") {
     if (!process.stdin.isTTY) {
-      console.log(help());
+      console.error("The interactive CLI requires a terminal; use `node src/cli.js summary` for non-interactive output.");
+      process.exitCode = 2;
       return;
     }
-    process.exitCode = await runInteractiveCli(options, {
-      showUsage,
-      pushUsage: pushSnapshot,
-      pullUsage: pullSnapshots,
-    });
+    try {
+      process.exitCode = await runInteractiveCli(options, {
+        showUsage,
+        pushUsage: pushSnapshot,
+        pullUsage: pullSnapshots,
+      });
+    } finally {
+      usageService.close();
+    }
     return;
   }
 
@@ -1149,12 +993,12 @@ async function main() {
 
   if (options.command === "snapshot") {
     const snapshot = await createSnapshot(options);
-    console.log(`Wrote ${options.state}`);
+    console.log(`Wrote ${usageService.paths(options).statePath}`);
     console.log(`Today: ${snapshot.today?.totalTokens?.toLocaleString("en-US") || 0} tokens`);
     return;
   }
 
-  if (options.command === "cli") {
+  if (options.command === "summary") {
     await showUsage(options);
     return;
   }
@@ -1165,12 +1009,12 @@ async function main() {
   }
 
   if (options.command === "push") {
-    await pushSnapshot(options);
+    await pushSnapshot(options, { setExitCode: true });
     return;
   }
 
   if (options.command === "pull") {
-    await pullSnapshots(options);
+    await pullSnapshots(options, { setExitCode: true });
     return;
   }
 
@@ -1187,6 +1031,7 @@ async function main() {
     if (!options.skillsAction && process.stdin.isTTY) {
       const prompt = createTerminalPrompter();
       try {
+        prompt.open();
         await runInteractiveSkillsCli(options, prompt);
       } finally {
         prompt.close();
@@ -1201,7 +1046,19 @@ async function main() {
   process.exitCode = 2;
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack : error);
-  process.exitCode = 1;
-});
+function isMainModule() {
+  const candidates = [process.argv[1]];
+  try {
+    if (process.argv[1]) candidates.push(realpathSync(process.argv[1]));
+  } catch {
+    // The direct path check below still handles ordinary invocations.
+  }
+  return candidates.filter(Boolean).some((candidate) => pathToFileURL(candidate).href === import.meta.url);
+}
+
+if (isMainModule()) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack : error);
+    process.exitCode = 1;
+  });
+}

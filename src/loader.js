@@ -3,6 +3,7 @@ import { loadClaudeReports } from "./claude.js";
 import { readConfig } from "./config.js";
 import { priceEvents } from "./pricing.js";
 import { resolveCodexHomes, resolveClaudeRoots, sourceLabelMap } from "./sources.js";
+import { dayKey } from "./time.js";
 
 function blankAggregate(extra = {}) {
   return {
@@ -196,8 +197,8 @@ export async function loadAllReports(options = {}) {
   ]);
 
   const [codex, claude] = await Promise.all([
-    loadCodexReports({ ...options, codexHomes, sourceLabels }),
-    loadClaudeReports({ ...options, claudeRoots, sourceLabels }),
+    loadCodexReports({ ...options, codexHomes, sourceLabels, rawOnly: true }),
+    loadClaudeReports({ ...options, claudeRoots, sourceLabels, rawOnly: true }),
   ]);
 
   const rawEvents = [...(codex.events || []), ...(claude.events || [])].sort(
@@ -232,17 +233,7 @@ export async function loadAllReports(options = {}) {
 
   const daily = sortByDate(buildRows(
     allEvents,
-    (event) => {
-      const tz = options.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const parts = new Intl.DateTimeFormat("en-CA", {
-        timeZone: tz,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }).formatToParts(new Date(event.timestamp));
-      const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-      return `${values.year}-${values.month}-${values.day}`;
-    },
+    (event) => dayKey(event.timestamp, options.timezone),
     (_event, date) => ({ date }),
   ));
   const totals = buildTotals(allEvents);
@@ -320,6 +311,7 @@ export async function loadAllReports(options = {}) {
         claude: { filesRead: claude.tool?.filesRead || 0, events: claude.events?.length || 0 },
       },
       pricing: priced.meta,
+      aggregatesFromEvents: true,
     },
   };
 }
