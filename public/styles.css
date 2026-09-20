@@ -107,9 +107,11 @@ body {
 
 .topbar-left {
   display: flex;
+  flex: 1 1 auto;
   align-items: baseline;
   gap: var(--space-4);
-  flex-wrap: wrap;
+  min-width: 0;
+  flex-wrap: nowrap;
 }
 
 .logo {
@@ -129,9 +131,17 @@ body {
 }
 
 .topbar-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   color: var(--ink-muted);
   font-family: var(--font-mono);
+}
+
+.topbar > .btn {
+  flex: 0 0 auto;
 }
 
 .btn {
@@ -314,6 +324,26 @@ body {
   grid-template-columns: 26px minmax(160px, 220px) 26px;
   align-items: center;
   gap: 6px;
+}
+
+.model-view-switcher {
+  display: grid;
+  grid-template-columns: 26px minmax(54px, 72px) 26px;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-view-switcher .btn {
+  width: 26px;
+  height: 26px;
+  justify-content: center;
+  padding: 0;
+  font-size: 11px;
+}
+
+.model-view-switcher .panel-sub {
+  text-align: center;
+  white-space: nowrap;
 }
 
 .trend-view-switcher .btn {
@@ -756,6 +786,17 @@ body {
   margin: 0;
 }
 
+.detail-retry-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: calc(-1 * var(--space-5));
+  padding-bottom: var(--space-5);
+}
+
+.detail-retry {
+  min-height: 36px;
+}
+
 /* ── Focus ──────────────────────────────── */
 
 :focus-visible {
@@ -797,6 +838,15 @@ body {
   .topbar {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .topbar-left {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .topbar-status {
+    white-space: normal;
   }
 
   .panel-head {

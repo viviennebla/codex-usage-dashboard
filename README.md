@@ -307,7 +307,9 @@ node src/cli.js skills push \
 
 ## 费用估算
 
-默认启用费用估算。内置价格表覆盖部分 OpenAI 和 DeepSeek 模型，并会把一些 Codex 产品模式暂按 GPT-5.5 价格估算。`gpt-6-astra` 会被识别为 Codex 模型，在配置专属价格前同样使用该回退策略并标记为 fallback。
+默认启用费用估算。内置价格表覆盖 GPT-6 Astra、GPT-5.6 Sol/Terra/Luna、GPT-5.5、GPT-5.4 Mini、GPT-5.3-Codex、Claude Opus 4.8 和 DeepSeek V4。没有独立公开价格的 Codex 产品模式会使用最接近的公开模型价格估算，并明确标记为 fallback；例如 `gpt-5.3-codex-spark` 使用 GPT-5.3-Codex 的公开价格估算。
+
+费用是按公开的标准 API 单价计算的等价估算，不代表 Codex/Claude 订阅账单，也不包含 Batch、Fast mode、区域处理等价格修正。Claude 快照目前未区分 5 分钟和 1 小时缓存写入，因此内置表按 5 分钟缓存写入单价估算；如实际使用 1 小时缓存，请用下面的配置覆盖模型价格。
 
 可以在 `~/.codex-usage.json` 中覆盖价格：
 

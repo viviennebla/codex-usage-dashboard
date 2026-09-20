@@ -32,7 +32,7 @@ test("prices an unrecognized Codex product mode as GPT-5.5 and marks the fallbac
   assert.equal(result.events[0].costUSD, 5);
   assert.equal(result.events[0].costPricingModel, "gpt-5.5");
   assert.equal(result.events[0].costPricingFallback, true);
-  assert.equal(result.meta.updated_at, "2026-07-10T00:00:00.000Z");
+  assert.equal(result.meta.updated_at, "2026-09-11T00:00:00.000Z");
 });
 
 test("keeps DeepSeek models on their own direct price table", () => {
@@ -49,7 +49,7 @@ test("keeps DeepSeek models on their own direct price table", () => {
   assert.equal(result.events[0].costPricingFallback, false);
 });
 
-test("prices GPT-5.6 Codex variants as GPT-5.5 until their own table is configured", () => {
+test("prices GPT-5.6 Sol with its current direct rate", () => {
   const result = priceEvents([{
     source: "sessions",
     model: "gpt-5.6-sol",
@@ -58,12 +58,12 @@ test("prices GPT-5.6 Codex variants as GPT-5.5 until their own table is configur
     outputTokens: 0,
   }]);
 
-  assert.equal(result.events[0].costUSD, 5);
-  assert.equal(result.events[0].costPricingModel, "gpt-5.5");
-  assert.equal(result.events[0].costPricingFallback, true);
+  assert.equal(result.events[0].costUSD, 4);
+  assert.equal(result.events[0].costPricingModel, "gpt-5.6-sol");
+  assert.equal(result.events[0].costPricingFallback, false);
 });
 
-test("recognizes GPT-6 Astra as a Codex model with fallback pricing", () => {
+test("prices GPT-6 Astra with its current direct rate", () => {
   const result = priceEvents([{
     source: "sessions",
     model: "gpt-6-astra",
@@ -72,9 +72,72 @@ test("recognizes GPT-6 Astra as a Codex model with fallback pricing", () => {
     outputTokens: 0,
   }]);
 
-  assert.equal(result.events[0].costUSD, 5);
-  assert.equal(result.events[0].costPricingModel, "gpt-5.5");
+  assert.equal(result.events[0].costUSD, 10);
+  assert.equal(result.events[0].costPricingModel, "gpt-6-astra");
+  assert.equal(result.events[0].costPricingFallback, false);
+});
+
+test("prices the GPT-5.6 family with direct input, cache, cache-write, and output rates", () => {
+  const expected = {
+    "gpt-5.6-sol": 29.4,
+    "gpt-5.6-terra": 16.7,
+    "gpt-5.6-luna": 1.67,
+  };
+
+  for (const [model, costUSD] of Object.entries(expected)) {
+    const result = priceEvents([{
+      source: "sessions",
+      model,
+      inputTokens: 1_000_000,
+      cacheReadTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000,
+      outputTokens: 1_000_000,
+    }]);
+    assert.equal(result.events[0].costUSD, costUSD);
+    assert.equal(result.events[0].costPricingFallback, false);
+  }
+});
+
+test("marks GPT-5.3 Codex Spark as an estimate based on the official Codex family rate", () => {
+  const result = priceEvents([{
+    source: "sessions",
+    model: "gpt-5.3-codex-spark",
+    inputTokens: 1_000_000,
+    outputTokens: 0,
+  }]);
+
+  assert.equal(result.events[0].costUSD, 1.75);
+  assert.equal(result.events[0].costPricingModel, "gpt-5.3-codex");
   assert.equal(result.events[0].costPricingFallback, true);
+});
+
+test("prices GPT-5.4 Mini with its direct standard API rate", () => {
+  const result = priceEvents([{
+    source: "sessions",
+    model: "gpt-5.4-mini",
+    inputTokens: 1_000_000,
+    cacheReadTokens: 1_000_000,
+    outputTokens: 1_000_000,
+  }]);
+
+  assert.equal(result.events[0].costUSD, 5.325);
+  assert.equal(result.events[0].costPricingModel, "gpt-5.4-mini");
+  assert.equal(result.events[0].costPricingFallback, false);
+});
+
+test("prices Claude Opus 4.8 with its direct standard API and 5-minute cache-write rates", () => {
+  const result = priceEvents([{
+    source: "claude",
+    model: "claude-opus-4-8",
+    inputTokens: 1_000_000,
+    cacheReadTokens: 1_000_000,
+    cacheCreationTokens: 1_000_000,
+    outputTokens: 1_000_000,
+  }]);
+
+  assert.equal(result.events[0].costUSD, 36.75);
+  assert.equal(result.events[0].costPricingModel, "claude-opus-4-8");
+  assert.equal(result.events[0].costPricingFallback, false);
 });
 
 test("keeps a newer local snapshot when a pull returns an older one", () => {

@@ -38,3 +38,39 @@ test("derives model tokens and requests from the same raw events", () => {
   assert.equal(snapshot.models[model].eventCount, 2);
   assert.equal(snapshot.models[model].totalTokens, 30);
 });
+
+test("builds a seven-calendar-day model aggregate including today", () => {
+  const now = new Date();
+  const eventAtDayOffset = (offset, model, totalTokens) => {
+    const timestamp = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + offset,
+      12,
+    ).toISOString();
+    return { timestamp, model, totalTokens };
+  };
+  const events = [
+    eventAtDayOffset(0, "today-model", 10),
+    eventAtDayOffset(-6, "boundary-model", 20),
+    eventAtDayOffset(-7, "older-model", 40),
+  ];
+  const daily = events.map((event) => ({
+    date: localDate(new Date(event.timestamp)),
+    totalTokens: event.totalTokens,
+  }));
+
+  const snapshot = buildSnapshot({
+    events,
+    daily: { daily, totals: { totalTokens: 70 } },
+    sessions: { sessions: [], totals: { totalTokens: 70 } },
+    projects: { projects: [] },
+    tool: {},
+  });
+
+  assert.equal(snapshot.seven_days.day_count, 7);
+  assert.equal(snapshot.seven_days.totalTokens, 30);
+  assert.equal(snapshot.seven_days.models["today-model"].totalTokens, 10);
+  assert.equal(snapshot.seven_days.models["boundary-model"].totalTokens, 20);
+  assert.equal(snapshot.seven_days.models["older-model"], undefined);
+});

@@ -1,4 +1,4 @@
-import { aggregateEvents } from "./loader.js";
+import { aggregateEvents, aggregateRows } from "./loader.js";
 import { dayKey } from "./time.js";
 
 const SNAPSHOT_SCHEMA_VERSION = "0.2";
@@ -6,6 +6,11 @@ const SNAPSHOT_SCHEMA_VERSION = "0.2";
 function todayKey(now = new Date()) {
   // Use local timezone so "today" matches the daily row grouping.
   return dayKey(now);
+}
+
+function shiftDateKey(date, offset) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + offset)).toISOString().slice(0, 10);
 }
 
 function number(value) {
@@ -243,6 +248,7 @@ export function buildSnapshot(reports, options = {}) {
   );
   const projectRows = (reports.projects?.projects || []).map(addDerived);
   const todayDate = todayKey(generatedAt);
+  const sevenDayStartDate = shiftDateKey(todayDate, -6);
   const aggregatedToday = dailyRows.find((row) => row.date === todayDate) || null;
   const aggregatedTotals = reports.daily.totals || reports.sessions.totals || null;
   const aggregatesFromEvents = reports.tool?.aggregatesFromEvents === true;
@@ -251,6 +257,17 @@ export function buildSnapshot(reports, options = {}) {
   );
   const todayModelUsage = aggregatesFromEvents ? aggregatedToday : aggregateEvents(todayEvents);
   const totalModelUsage = aggregatesFromEvents ? aggregatedTotals : aggregateEvents(events);
+  const sevenDayRows = dailyRows.filter(
+    (row) => row.date >= sevenDayStartDate && row.date <= todayDate,
+  );
+  const sevenDayEvents = aggregatesFromEvents ? [] : events.filter((event) => {
+    const date = dayKey(event.timestamp, options.timezone);
+    return date >= sevenDayStartDate && date <= todayDate;
+  });
+  const aggregatedSevenDays = aggregateRows(sevenDayRows);
+  const sevenDayModelUsage = aggregatesFromEvents
+    ? aggregatedSevenDays
+    : aggregateEvents(sevenDayEvents);
   const today = withModelUsage(
     aggregatedToday,
     todayModelUsage,
@@ -259,6 +276,12 @@ export function buildSnapshot(reports, options = {}) {
     aggregatedTotals,
     totalModelUsage,
   );
+  const sevenDays = {
+    ...withModelUsage(aggregatedSevenDays, sevenDayModelUsage),
+    start_date: sevenDayStartDate,
+    end_date: todayDate,
+    day_count: 7,
+  };
   const recentDays = dailyRows.slice(-35); // compact trend window
   const activityDays = dailyRows.slice(-93); // roughly three months for heatmap
   const trendViews = buildTrendViews(
@@ -355,6 +378,7 @@ export function buildSnapshot(reports, options = {}) {
       timezone: options.timezone || null,
     },
     today: today || null,
+    seven_days: sevenDays,
     source_status: sourceStatus,
     active_session: activeSession,
     limits,

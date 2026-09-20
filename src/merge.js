@@ -238,6 +238,21 @@ function mergeModels(deviceEntries) {
   return models;
 }
 
+function mergeSevenDays(rows, endDate = localDateKey()) {
+  const [year, month, day] = endDate.split("-").map(Number);
+  const startDate = new Date(Date.UTC(year, month - 1, day - 6)).toISOString().slice(0, 10);
+  const aggregate = blankAggregate();
+  for (const row of rows) {
+    if (row.date >= startDate && row.date <= endDate) addToAggregate(aggregate, row);
+  }
+  return {
+    ...aggregate,
+    start_date: startDate,
+    end_date: endDate,
+    day_count: 7,
+  };
+}
+
 function mergeTopItems(deviceEntries, field) {
   const items = [];
   for (const [deviceId, { deviceName, snapshot }] of deviceEntries) {
@@ -362,6 +377,20 @@ function buildOverallStatus(deviceEntries) {
   return { label: labelMap[worst] || "unknown", code: worst };
 }
 
+function latestGeneratedAt(deviceEntries) {
+  let latest = null;
+  let latestMs = -Infinity;
+  for (const [, { snapshot }] of deviceEntries) {
+    const value = snapshot?.generated_at;
+    const timestamp = Date.parse(value || "");
+    if (Number.isFinite(timestamp) && timestamp > latestMs) {
+      latest = value;
+      latestMs = timestamp;
+    }
+  }
+  return latest;
+}
+
 /**
  * Merge snapshots from multiple devices into a unified view.
  *
@@ -370,13 +399,16 @@ function buildOverallStatus(deviceEntries) {
  * @returns {object} Merged snapshot with per-device drill-down
  */
 export function mergeSnapshots(deviceEntries, config = {}) {
+  const mergedAt = new Date().toISOString();
   if (deviceEntries.size === 0) {
     return {
       schema_version: "0.3",
-      generated_at: new Date().toISOString(),
+      generated_at: mergedAt,
+      merged_at: mergedAt,
       device_count: 0,
       source_devices: {},
       today: null,
+      seven_days: null,
       totals: null,
       models: {},
       recent_days: [],
@@ -416,13 +448,18 @@ export function mergeSnapshots(deviceEntries, config = {}) {
   const mergedTotals = mergeTotals(repricedEntries);
   const mergedRecentDays = mergeDaily(repricedEntries, "recent_days");
   const mergedActivityDays = mergeActivityDays(repricedEntries);
+  const mergedSevenDays = mergeSevenDays(mergedRecentDays);
 
   const merged = {
     schema_version: "0.3",
-    generated_at: new Date().toISOString(),
+    // Keep the data revision stable across equivalent reads. merged_at records
+    // when this projection was assembled without forcing clients to re-render.
+    generated_at: latestGeneratedAt(repricedEntries) || mergedAt,
+    merged_at: mergedAt,
     device_count: repricedEntries.size,
     source_devices: sourceDevices,
     today: mergedToday,
+    seven_days: mergedSevenDays,
     totals: mergedTotals,
     models: mergeModels(repricedEntries),
     recent_days: mergedRecentDays,

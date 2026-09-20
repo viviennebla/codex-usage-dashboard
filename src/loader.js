@@ -102,6 +102,12 @@ export function aggregateEvents(events = []) {
   return buildTotals(events);
 }
 
+export function aggregateRows(rows = []) {
+  const totals = blankAggregate();
+  for (const row of rows) mergeAggregateRow(totals, row);
+  return totals;
+}
+
 /**
  * Merge a pre-aggregated row (e.g., a daily summary from one source) into a
  * combined aggregate.  Unlike addToAggregate this sums eventCount from the

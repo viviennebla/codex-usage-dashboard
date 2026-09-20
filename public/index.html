@@ -131,10 +131,10 @@
         <section class="panel">
           <div class="panel-head">
             <h2>Model Breakdown</h2>
-            <div style="display:flex;align-items:center;gap:6px">
-              <button id="modelPrev" class="btn" style="font-size:11px;padding:2px 6px" title="Show today model usage">&#8593;</button>
-              <span class="panel-sub" id="modelViewLabel">today</span>
-              <button id="modelNext" class="btn" style="font-size:11px;padding:2px 6px" title="Show total model usage">&#8595;</button>
+            <div class="model-view-switcher">
+              <button id="modelPrev" class="btn" title="Previous model usage period" aria-label="Previous model usage period">&#8593;</button>
+              <span class="panel-sub" id="modelViewLabel" aria-live="polite">today</span>
+              <button id="modelNext" class="btn" title="Next model usage period" aria-label="Next model usage period">&#8595;</button>
             </div>
           </div>
           <div class="chart-wrap">

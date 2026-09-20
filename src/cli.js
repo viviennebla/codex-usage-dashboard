@@ -869,7 +869,10 @@ function startWeb(options) {
         return;
       }
       const response = await serveStatic(url.pathname);
-      res.writeHead(response.status, { "content-type": response.type });
+      res.writeHead(response.status, {
+        "content-type": response.type,
+        "cache-control": "no-cache",
+      });
       res.end(response.body);
     } catch (error) {
       const status = error.statusCode || 500;

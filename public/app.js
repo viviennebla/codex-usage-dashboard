@@ -1027,6 +1027,7 @@ function drawModelChart(snapshot, animate = false) {
 function modelViews(snapshot) {
   return [
     { id: "today", label: "today", models: snapshot?.today?.models || {} },
+    { id: "seven-days", label: "7 days", models: snapshot?.seven_days?.models || {} },
     { id: "total", label: "total", models: snapshot?.models || {} },
   ];
 }
@@ -1357,13 +1358,13 @@ let latestSnapshot = null;
 let trendViewIndex = 0;
 let modelViewIndex = 0;
 let sourcePromptShown = false;
-let detailSnapshotVersion = "";
+let detailLoadGeneration = 0;
 const detailLoads = new Set();
 
 const DETAIL_SECTIONS = {
-  projects: { panelId: "projectsPanel", targetId: "projects", field: "top_projects", render: renderProjects },
-  sessions: { panelId: "sessionsPanel", targetId: "sessions", field: "top_sessions", render: renderSessions },
-  skills: { panelId: "skillsPanel", targetId: "skills", field: "skills", render: renderSkills },
+  projects: { panelId: "projectsPanel", targetId: "projects", field: "top_projects", label: "projects", render: renderProjects },
+  sessions: { panelId: "sessionsPanel", targetId: "sessions", field: "top_sessions", label: "sessions", render: renderSessions },
+  skills: { panelId: "skillsPanel", targetId: "skills", field: "skills", label: "skills and MCP data", render: renderSkills },
 };
 
 const detailObserver = typeof IntersectionObserver === "undefined"
@@ -1378,11 +1379,12 @@ const detailObserver = typeof IntersectionObserver === "undefined"
   }, { rootMargin: "160px" });
 
 function prepareDetails(snapshot) {
-  detailSnapshotVersion = snapshot.generated_at || "";
+  detailLoadGeneration += 1;
   detailLoads.clear();
   for (const [section, config] of Object.entries(DETAIL_SECTIONS)) {
     const panel = $(config.panelId);
     $(config.targetId).innerHTML = emptyState("Loading…");
+    panel.setAttribute("aria-busy", "true");
     panel.dataset.detailSection = section;
     if (detailObserver) detailObserver.observe(panel);
     else loadDetail(section).catch(() => {});
@@ -1392,16 +1394,35 @@ function prepareDetails(snapshot) {
 async function loadDetail(section) {
   const config = DETAIL_SECTIONS[section];
   if (!config || !latestSnapshot) return;
-  const key = `${detailSnapshotVersion}:${section}`;
+  const generation = detailLoadGeneration;
+  const key = `${generation}:${section}`;
   if (detailLoads.has(key)) return;
   detailLoads.add(key);
+  const panel = $(config.panelId);
+  const target = $(config.targetId);
 
-  const response = await fetch(`/api/details?section=${encodeURIComponent(section)}`, { cache: "no-store" });
-  if (!response.ok) throw new Error(await response.text());
-  const detail = await response.json();
-  if (detail.generated_at !== detailSnapshotVersion || !latestSnapshot) return;
-  latestSnapshot[config.field] = detail[config.field] || [];
-  config.render(latestSnapshot);
+  try {
+    const response = await fetch(`/api/details?section=${encodeURIComponent(section)}`, { cache: "no-store" });
+    if (!response.ok) throw new Error(await response.text());
+    const detail = await response.json();
+    // Server timestamps are data metadata, not request identities. Use the
+    // local render generation to reject genuinely stale in-flight requests.
+    if (generation !== detailLoadGeneration || !latestSnapshot) return;
+    latestSnapshot[config.field] = detail[config.field] || [];
+    config.render(latestSnapshot);
+  } catch {
+    if (generation !== detailLoadGeneration) return;
+    target.innerHTML = `${emptyState(`Could not load ${config.label}.`)}
+      <div class="detail-retry-wrap"><button class="btn detail-retry" type="button">Retry</button></div>`;
+    target.querySelector(".detail-retry")?.addEventListener("click", () => {
+      target.innerHTML = emptyState("Loading…");
+      panel.setAttribute("aria-busy", "true");
+      loadDetail(section).catch(() => {});
+    }, { once: true });
+  } finally {
+    detailLoads.delete(key);
+    if (generation === detailLoadGeneration) panel.setAttribute("aria-busy", "false");
+  }
 }
 
 function trendViews(snapshot) {
@@ -1449,7 +1470,12 @@ function renderTrend(snapshot) {
 let backgroundRefreshPoll = null;
 
 async function refresh(rebuild = false) {
-  $("meta").textContent = rebuild ? "Refreshing data…" : "Loading…";
+  // Keep the current status visible while stale-while-revalidate polls in the
+  // background. Replacing it every second makes the header shift even when
+  // the snapshot has not changed.
+  if (rebuild || !latestSnapshot) {
+    $("meta").textContent = rebuild ? "Refreshing data…" : "Loading…";
+  }
   const response = await fetch(rebuild ? "/api/refresh" : "/api/snapshot", {
     method: rebuild ? "POST" : "GET",
     cache: "no-store",

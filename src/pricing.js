@@ -1,35 +1,100 @@
 const USD_PER_MILLION = 1_000_000;
-export const BUILTIN_PRICE_TABLE_UPDATED_AT = "2026-07-10T00:00:00.000Z";
+export const BUILTIN_PRICE_TABLE_UPDATED_AT = "2026-09-11T00:00:00.000Z";
 
 const BUILTIN_PRICES = {
+  "gpt-6-astra": {
+    provider: "openai",
+    inputUSDPerMTok: 10,
+    cacheReadUSDPerMTok: 1,
+    cacheCreationUSDPerMTok: 12.5,
+    outputUSDPerMTok: 50,
+    source: "openai_api_model_docs_2026-09-11",
+  },
+  "gpt-5.6-sol": {
+    provider: "openai",
+    inputUSDPerMTok: 4,
+    cacheReadUSDPerMTok: 0.4,
+    cacheCreationUSDPerMTok: 5,
+    outputUSDPerMTok: 20,
+    source: "openai_api_model_docs_2026-09-11",
+  },
+  "gpt-5.6-terra": {
+    provider: "openai",
+    inputUSDPerMTok: 2,
+    cacheReadUSDPerMTok: 0.2,
+    cacheCreationUSDPerMTok: 2.5,
+    outputUSDPerMTok: 12,
+    source: "openai_api_model_docs_2026-09-11",
+  },
+  "gpt-5.6-luna": {
+    provider: "openai",
+    inputUSDPerMTok: 0.2,
+    cacheReadUSDPerMTok: 0.02,
+    cacheCreationUSDPerMTok: 0.25,
+    outputUSDPerMTok: 1.2,
+    source: "openai_api_model_docs_2026-09-11",
+  },
   "gpt-5.5": {
     provider: "openai",
     inputUSDPerMTok: 5,
     cacheReadUSDPerMTok: 0.5,
     outputUSDPerMTok: 30,
-    source: "openai_gpt_5_5_api_docs_2026-07-10",
+    source: "openai_api_model_docs_2026-09-11",
+  },
+  "gpt-5.4-mini": {
+    provider: "openai",
+    inputUSDPerMTok: 0.75,
+    cacheReadUSDPerMTok: 0.075,
+    outputUSDPerMTok: 4.5,
+    source: "openai_api_model_docs_2026-09-11",
+  },
+  "gpt-5.3-codex": {
+    provider: "openai",
+    inputUSDPerMTok: 1.75,
+    cacheReadUSDPerMTok: 0.175,
+    outputUSDPerMTok: 14,
+    source: "openai_api_model_docs_2026-09-11",
+  },
+  "claude-opus-4-8": {
+    provider: "anthropic",
+    inputUSDPerMTok: 5,
+    cacheReadUSDPerMTok: 0.5,
+    // Claude usage snapshots currently combine cache writes into one counter.
+    // Apply the standard 5-minute write rate; 1-hour writes cost $10/MTok.
+    cacheCreationUSDPerMTok: 6.25,
+    outputUSDPerMTok: 25,
+    source: "anthropic_api_pricing_docs_2026-09-11",
   },
   "deepseek-v4-pro": {
     provider: "deepseek",
     inputUSDPerMTok: 0.435,
     cacheReadUSDPerMTok: 0.003625,
     outputUSDPerMTok: 0.87,
-    source: "deepseek_api_docs_2026-07-09",
+    source: "deepseek_api_docs_2026-09-11",
   },
   "deepseek-v4-flash": {
     provider: "deepseek",
     inputUSDPerMTok: 0.14,
     cacheReadUSDPerMTok: 0.0028,
     outputUSDPerMTok: 0.28,
-    source: "deepseek_api_docs_2026-07-09",
+    source: "deepseek_api_docs_2026-09-11",
   },
 };
 
 const MODEL_ALIASES = {
   "gpt-5.5-2026-04-23": "gpt-5.5",
+  "gpt-5.6": "gpt-5.6-sol",
   "deepseek-chat": "deepseek-v4-flash",
   "deepseek-reasoner": "deepseek-v4-flash",
 };
+
+const CODEX_FAMILY_FALLBACKS = [
+  "gpt-6-astra",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.3-codex",
+];
 
 function number(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -46,6 +111,8 @@ function sourceAgent(event) {
 export function isCodexModel(model) {
   const normalized = normalizeModelName(model);
   return normalized.startsWith("codex-")
+    || normalized.startsWith("gpt-5.3-codex")
+    || normalized.startsWith("gpt-5.4")
     || normalized.startsWith("gpt-5.6")
     || normalized.startsWith("gpt-6-");
 }
@@ -72,6 +139,8 @@ export function pricingTableUpdatedAt(config = {}) {
 function defaultFallbackModel(event) {
   if (sourceAgent(event) !== "codex") return null;
   const model = normalizeModelName(event.model);
+  const family = CODEX_FAMILY_FALLBACKS.find((name) => model.startsWith(`${name}-`));
+  if (family) return family;
   // Codex product labels and newer Codex model variants without their own
   // configured table are estimated with the GPT-5.5 Codex rate.
   return model === "unknown" || isCodexModel(model)

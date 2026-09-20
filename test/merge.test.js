@@ -48,7 +48,7 @@ test("recalculates remote model costs from the current price table", () => {
   assert.equal(merged.totals.costUSD, 35.5);
   assert.equal(merged.models["gpt-5.5"].costUSD, 35.5);
   assert.equal(merged.models["gpt-5.5"].costPricingFallback, false);
-  assert.equal(merged.cost.pricing.updated_at, "2026-07-10T00:00:00.000Z");
+  assert.equal(merged.cost.pricing.updated_at, "2026-09-11T00:00:00.000Z");
 });
 
 test("does not guess a price for an unknown model in a remote aggregate", () => {
@@ -190,6 +190,55 @@ test("reprices GPT-6 Astra from remote Codex snapshots", () => {
     ["astra", { deviceName: "astra", snapshot: { today: usage, totals: usage, models: usage.models } }],
   ]));
 
-  assert.equal(merged.models["gpt-6-astra"].costUSD, 5);
-  assert.equal(merged.models["gpt-6-astra"].costPricingFallback, true);
+  assert.equal(merged.models["gpt-6-astra"].costUSD, 10);
+  assert.equal(merged.models["gpt-6-astra"].costPricingFallback, false);
+});
+
+test("rebuilds the merged seven-day model aggregate from calendar-day rows", () => {
+  const endDate = localDate();
+  const shiftDate = (offset) => {
+    const [year, month, day] = endDate.split("-").map(Number);
+    return new Date(Date.UTC(year, month - 1, day + offset)).toISOString().slice(0, 10);
+  };
+  const row = (date, tokens) => ({
+    date,
+    totalTokens: tokens,
+    eventCount: 1,
+    models: { "gpt-5.5": { totalTokens: tokens, eventCount: 1 } },
+  });
+  const snapshot = {
+    today: row(endDate, 10),
+    totals: { totalTokens: 70, models: { "gpt-5.5": { totalTokens: 70 } } },
+    models: { "gpt-5.5": { totalTokens: 70 } },
+    recent_days: [row(shiftDate(-7), 40), row(shiftDate(-6), 20), row(endDate, 10)],
+  };
+
+  const merged = mergeSnapshots(new Map([["device", { deviceName: "device", snapshot }]]));
+
+  assert.equal(merged.seven_days.day_count, 7);
+  assert.equal(merged.seven_days.totalTokens, 30);
+  assert.equal(merged.seven_days.models["gpt-5.5"].totalTokens, 30);
+});
+
+test("keeps merged generated_at stable at the newest source revision", () => {
+  const older = {
+    generated_at: "2026-09-10T10:00:00.000Z",
+    today: { totalTokens: 1, models: {} },
+    totals: { totalTokens: 1, models: {} },
+    models: {},
+  };
+  const newer = {
+    generated_at: "2026-09-11T10:00:00.000Z",
+    today: { totalTokens: 2, models: {} },
+    totals: { totalTokens: 2, models: {} },
+    models: {},
+  };
+
+  const merged = mergeSnapshots(new Map([
+    ["older", { deviceName: "older", snapshot: older }],
+    ["newer", { deviceName: "newer", snapshot: newer }],
+  ]));
+
+  assert.equal(merged.generated_at, newer.generated_at);
+  assert.ok(Number.isFinite(Date.parse(merged.merged_at)));
 });
