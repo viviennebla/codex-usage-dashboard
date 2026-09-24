@@ -998,3 +998,84 @@ async function main() {
     try {
       await configureConnection(prompt);
     } finally {
+      prompt.close();
+    }
+    return;
+  }
+
+  if (options.command === "snapshot") {
+    const snapshot = await createSnapshot(options);
+    console.log(`Wrote ${usageService.paths(options).statePath}`);
+    console.log(`Today: ${snapshot.today?.totalTokens?.toLocaleString("en-US") || 0} tokens`);
+    return;
+  }
+
+  if (options.command === "summary") {
+    await showUsage(options);
+    return;
+  }
+
+  if (options.command === "web") {
+    startWeb(options);
+    return;
+  }
+
+  if (options.command === "push") {
+    await pushSnapshot(options, { setExitCode: true });
+    return;
+  }
+
+  if (options.command === "pull") {
+    await pullSnapshots(options, { setExitCode: true });
+    return;
+  }
+
+  if (options.command === "register") {
+    await registerDirectory(options);
+    return;
+  }
+
+  if (options.command === "denglema") {
+    process.exitCode = await runDenglemaCli(options);
+    return;
+  }
+
+  if (options.command === "skills") {
+    if (options.help) {
+      console.log(help());
+      return;
+    }
+    if (!options.skillsAction && process.stdin.isTTY) {
+      const prompt = createTerminalPrompter();
+      try {
+        prompt.open();
+        await runInteractiveSkillsCli(options, prompt);
+      } finally {
+        prompt.close();
+      }
+      return;
+    }
+    process.exitCode = await runSkillsCli(options);
+    return;
+  }
+
+  console.error(help());
+  process.exitCode = 2;
+}
+
+function isMainModule() {
+  const candidates = [process.argv[1]];
+  try {
+    if (process.argv[1]) candidates.push(realpathSync(process.argv[1]));
+  } catch {
+    // The direct path check below still handles ordinary invocations.
+  }
+  return candidates.filter(Boolean).some((candidate) => pathToFileURL(candidate).href === import.meta.url);
+}
+
+if (isMainModule()) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack : error);
+    process.exitCode = 1;
+  });
+}
