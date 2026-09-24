@@ -17,7 +17,8 @@
     "pull": "node src/cli.js pull",
     "configure": "node src/cli.js configure",
     "register": "node src/cli.js register",
-    "skills": "node src/cli.js skills"
+    "skills": "node src/cli.js skills",
+    "denglema": "node src/cli.js denglema"
   },
   "files": [
     "src/",
@@ -27,6 +28,13 @@
   "engines": {
     "node": ">=20"
   },
-  "keywords": ["codex", "claude", "usage", "dashboard", "token", "sync"],
+  "keywords": [
+    "codex",
+    "claude",
+    "usage",
+    "dashboard",
+    "token",
+    "sync"
+  ],
   "license": "MIT"
 }

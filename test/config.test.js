@@ -44,3 +44,26 @@ test("explicit and environment values override saved sync settings", () => {
   });
   assert.equal(resolveSyncConnection({}, config, { DASHBOARD_TOKEN: "env" }).token, "env");
 });
+
+test("Denglema installation config is stored separately from legacy sync", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "usage-denglema-config-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "config.json");
+
+  const { updateDenglemaConnection, resolveDenglemaConnection } = await import("../src/config.js");
+  await updateDenglemaConnection({
+    server: "https://deng.example/",
+    installationId: "inst-1",
+    token: "secret",
+    timezone: "Asia/Shanghai",
+  }, path);
+
+  const config = await readConfig(path);
+  assert.deepEqual(resolveDenglemaConnection({}, config, {}), {
+    server: "https://deng.example",
+    installationId: "inst-1",
+    token: "secret",
+    timezone: "Asia/Shanghai",
+  });
+  assert.deepEqual(config.sync, { server: null, token: null });
+});

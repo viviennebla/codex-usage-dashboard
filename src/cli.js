@@ -19,6 +19,7 @@ import {
 import { inspectSource, sourceLabelMap } from "./sources.js";
 import { CodexLimitsClient } from "./codex-limits.js";
 import { runSkillsCli } from "./skills-cli.js";
+import { runDenglemaCli } from "./denglema.js";
 import { createUsageService, SNAPSHOT_REFRESH_POLICIES } from "./application-service.js";
 import {
   configureConnection,
@@ -53,6 +54,9 @@ function parseArgs(argv) {
   if (command === "skills" && rest[0] && !rest[0].startsWith("-")) {
     options.skillsAction = rest.shift();
   }
+  if (command === "denglema" && rest[0] && !rest[0].startsWith("-")) {
+    options.denglemaAction = rest.shift();
+  }
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
     if (arg === "--since") options.since = rest[++index];
@@ -71,6 +75,8 @@ function parseArgs(argv) {
     else if (arg === "--server") options.server = rest[++index];
     else if (arg === "--device") options.device = rest[++index];
     else if (arg === "--token") options.token = rest[++index];
+    else if (arg === "--code") options.code = rest[++index];
+    else if (arg === "--name") options.name = rest[++index];
     else if (arg === "--names") options.names = rest[++index];
     else if (arg === "--strategy") options.strategy = rest[++index];
     else if (arg === "--yes" || arg === "-y") options.yes = true;
@@ -96,6 +102,8 @@ Usage:
   node src/cli.js pull
   node src/cli.js register --path <dir> --type codex|claude|skills [--label <name>]
   node src/cli.js skills [list|pull|push|prompt] [advanced options]
+  node src/cli.js denglema bind --server <url> --code <pairing-code> [--name <label>]
+  node src/cli.js denglema sync
   node src/cli.js skills prompt [--path <dir>] [--names a,b|--all] [--json]
 
 Commands:
@@ -109,6 +117,7 @@ Commands:
   pull      Pull snapshots from a remote dashboard server.
   register  Register a custom agent data directory.
   skills       Open the Skills menu, or run a non-interactive subcommand.
+  denglema     Bind this installation or upload today's cumulative Codex usage.
 
 Connection settings are saved in ~/.codex-usage.json. Explicit --server/--token
 options and DASHBOARD_TOKEN still override saved values for automation.
@@ -989,79 +998,3 @@ async function main() {
     try {
       await configureConnection(prompt);
     } finally {
-      prompt.close();
-    }
-    return;
-  }
-
-  if (options.command === "snapshot") {
-    const snapshot = await createSnapshot(options);
-    console.log(`Wrote ${usageService.paths(options).statePath}`);
-    console.log(`Today: ${snapshot.today?.totalTokens?.toLocaleString("en-US") || 0} tokens`);
-    return;
-  }
-
-  if (options.command === "summary") {
-    await showUsage(options);
-    return;
-  }
-
-  if (options.command === "web") {
-    startWeb(options);
-    return;
-  }
-
-  if (options.command === "push") {
-    await pushSnapshot(options, { setExitCode: true });
-    return;
-  }
-
-  if (options.command === "pull") {
-    await pullSnapshots(options, { setExitCode: true });
-    return;
-  }
-
-  if (options.command === "register") {
-    await registerDirectory(options);
-    return;
-  }
-
-  if (options.command === "skills") {
-    if (options.help) {
-      console.log(help());
-      return;
-    }
-    if (!options.skillsAction && process.stdin.isTTY) {
-      const prompt = createTerminalPrompter();
-      try {
-        prompt.open();
-        await runInteractiveSkillsCli(options, prompt);
-      } finally {
-        prompt.close();
-      }
-      return;
-    }
-    process.exitCode = await runSkillsCli(options);
-    return;
-  }
-
-  console.error(help());
-  process.exitCode = 2;
-}
-
-function isMainModule() {
-  const candidates = [process.argv[1]];
-  try {
-    if (process.argv[1]) candidates.push(realpathSync(process.argv[1]));
-  } catch {
-    // The direct path check below still handles ordinary invocations.
-  }
-  return candidates.filter(Boolean).some((candidate) => pathToFileURL(candidate).href === import.meta.url);
-}
-
-if (isMainModule()) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.stack : error);
-    process.exitCode = 1;
-  });
-}

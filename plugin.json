@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "denglema",
+  "version": "0.1.0",
+  "description": "Upload local Codex token usage to a Denglema team leaderboard.",
+  "author": { "name": "viviennebla" },
+  "repository": "https://github.com/viviennebla/codex-usage-dashboard",
+  "license": "MIT",
+  "keywords": ["codex", "usage", "leaderboard", "vibe-coding"]
+}
