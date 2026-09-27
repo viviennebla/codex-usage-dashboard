@@ -1,64 +1,50 @@
 ---
 name: denglema-sync
-description: "Bind this Codex installation to Denglema or upload today's Codex token usage when the user asks to sync, upload, test the Denglema collector, or uses the Chinese triggers \u8e6c\u4e00\u4e0b, \u540c\u6b65\u8e6c\u4e86\u5417, or \u7ed1\u5b9a\u8e6c\u4e86\u5417."
+description: "Bind this Codex installation to Denglema or sync today's Codex token usage when the user asks to sync, upload, test the Denglema collector, or uses the Chinese triggers \u8e6c\u4e00\u4e0b, \u540c\u6b65\u8e6c\u4e86\u5417, or \u7ed1\u5b9a\u8e6c\u4e86\u5417."
 ---
 
 # Denglema Sync
 
-Use the plugin's local collector. Never read or transmit prompt text, assistant messages, tool contents, source code, or full transcripts.
+Use the bundled Denglema MCP tools. Do not shell out to the CLI for normal plugin use.
 
-The default internal Denglema service is:
-
-```text
-http://10.21.5.77:1600
-```
+Never read or transmit prompt text, assistant messages, tool contents, source code, project names, model breakdowns, or full transcripts.
 
 ## Sync
 
-When the user asks to sync, first inspect local binding state:
+When the user asks to sync:
 
-```bash
-node "$PLUGIN_ROOT/src/cli.js" denglema status --json
-```
-
-If `bound` is true, run:
-
-```bash
-node "$PLUGIN_ROOT/src/cli.js" denglema sync
-```
-
-Reply briefly with the leaderboard date and uploaded token total.
+1. Call `denglema_status`.
+2. If `bound` is true, call `denglema_sync` with `dry_run=false`.
+3. Reply briefly with the leaderboard date and uploaded token total.
 
 If `bound` is false, tell the user to open Denglema in Feishu, choose the bind-device action, and provide the one-time pairing code. Do not ask the user to find or type the server URL.
 
 ## Bind
 
-When the user provides a pairing code, bind this installation to the default internal service:
+When the user provides a pairing code:
 
-```bash
-node "$PLUGIN_ROOT/src/cli.js" denglema bind --server "http://10.21.5.77:1600" --code "<pairing-code>"
-```
+1. Call `denglema_bind` with the supplied code.
+2. Add a friendly installation name only when the user supplied one.
+3. After a successful bind, immediately call `denglema_sync` with `dry_run=false` unless the user explicitly asked not to upload yet.
 
-Add `--name "<label>"` only when the user supplied a useful installation label.
-
-After a successful bind, immediately run one normal sync unless the user explicitly asked not to upload yet.
+Never invent a pairing code, installation ID, user ID, or credential.
 
 ## Offline test
 
-When the user asks to test the collector, preview an upload, or the company service is unavailable, run:
+When the user asks to test the collector, preview an upload, or avoid network writes, call:
 
-```bash
-node "$PLUGIN_ROOT/src/cli.js" denglema sync --dry-run
+```text
+denglema_sync(dry_run=true)
 ```
 
-Dry run is valid even before pairing. It scans the current native Codex environment using the same daily fast-path and performs no network request.
+Dry run scans the current native Codex environment with the same daily fast-path and performs no upload.
 
 ## Privacy
 
-The upload sample contains only:
+The sync sample contains only:
 
 - leaderboard date
 - observation timestamp
 - cumulative Codex token total for this installation
 
-It does not upload prompts, code, transcript contents, project names, model breakdowns, or filesystem paths.
+The MCP tools never return the installation token.
