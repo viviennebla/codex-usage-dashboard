@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "denglema",
-  "version": "0.1.1",
-  "description": "Sync local Codex token usage to the internal Denglema team race through a bundled local MCP tool.",
+  "version": "0.1.2",
+  "description": "Keep one hourly local Codex usage snapshot and upload it to Denglema only when the user chooses.",
   "author": {
     "name": "viviennebla"
   },
@@ -24,10 +24,12 @@
         "category": "Productivity",
         "brandColor": "#E76543",
         "defaultPrompt": [
-          "同步蹬了吗",
-          "测试同步蹬了吗"
+          "查看蹬了吗快照",
+          "上传蹬了吗",
+          "立即同步蹬了吗"
         ]
-      }
+      },
+      "hooks": "./hooks/hooks.json"
     }
   }
 }
