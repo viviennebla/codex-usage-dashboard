@@ -1,0 +1,20 @@
+{
+  "name": "denglema-dev",
+  "interface": {
+    "displayName": "蹬了吗 · Local Dev"
+  },
+  "plugins": [
+    {
+      "name": "denglema",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
