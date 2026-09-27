@@ -3,14 +3,20 @@ import { createInterface } from "node:readline";
 
 import {
   bindDenglema,
+  collectDenglemaSnapshot,
   getDenglemaStatus,
   syncDenglemaUsage,
   uploadLatestDenglemaSnapshot,
 } from "./denglema.js";
-import { getLatestDenglemaSnapshot } from "./denglema-snapshot.js";
+import {
+  DENGLEMA_SNAPSHOT_INTERVAL_MS,
+  getLatestDenglemaSnapshot,
+} from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "http://10.21.5.77:1600";
 const SERVER_INFO = { name: "denglema", version: "0.1.2" };
+const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
+const ERROR_RETRY_MS = 5 * 60 * 1000;
 
 export const DENGLEMA_TOOLS = [
   {
@@ -96,6 +102,56 @@ function textResult(value, isError = false) {
   };
 }
 
+export function nextDenglemaSnapshotDelay(
+  snapshot,
+  now = new Date(),
+  intervalMs = DENGLEMA_SNAPSHOT_INTERVAL_MS,
+) {
+  const observedAt = Date.parse(snapshot?.observed_at || "");
+  if (!Number.isFinite(observedAt)) return MIN_SCHEDULER_DELAY_MS;
+  const remaining = intervalMs - (now.getTime() - observedAt);
+  return Math.max(MIN_SCHEDULER_DELAY_MS, remaining);
+}
+
+export function startDenglemaSnapshotScheduler(dependencies = {}) {
+  const collect = dependencies.collectDenglemaSnapshot || collectDenglemaSnapshot;
+  const setTimer = dependencies.setTimeout || setTimeout;
+  const clearTimer = dependencies.clearTimeout || clearTimeout;
+  let timer = null;
+  let stopped = false;
+
+  async function tick() {
+    if (stopped) return;
+
+    let delay = ERROR_RETRY_MS;
+    try {
+      const result = await collect({}, dependencies);
+      const now = dependencies.now?.() || new Date();
+      delay = nextDenglemaSnapshotDelay(
+        result?.snapshot,
+        now,
+        DENGLEMA_SNAPSHOT_INTERVAL_MS,
+      );
+    } catch {
+      delay = ERROR_RETRY_MS;
+    }
+
+    if (stopped) return;
+    timer = setTimer(() => { void tick(); }, delay);
+    if (typeof timer?.unref === "function") timer.unref();
+  }
+
+  void tick();
+
+  return {
+    stop() {
+      stopped = true;
+      if (timer !== null) clearTimer(timer);
+      timer = null;
+    },
+  };
+}
+
 async function callDenglemaTool(name, args = {}, dependencies = {}) {
   const status = dependencies.getDenglemaStatus || getDenglemaStatus;
   const bind = dependencies.bindDenglema || bindDenglema;
@@ -141,7 +197,7 @@ export async function handleDenglemaMcpRequest(request, dependencies = {}) {
         protocolVersion: request.params?.protocolVersion || "2025-06-18",
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
-        instructions: "Denglema keeps one latest local snapshot. Hooks refresh it at most hourly; uploads happen only when the user chooses.",
+        instructions: "Denglema keeps one latest local snapshot. The local MCP process refreshes it at most hourly while Codex is in use; uploads happen only when the user chooses.",
       },
     };
   }
@@ -180,6 +236,7 @@ export async function handleDenglemaMcpRequest(request, dependencies = {}) {
 }
 
 export function startDenglemaMcpServer() {
+  const scheduler = startDenglemaSnapshotScheduler();
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
 
   lines.on("line", async (line) => {
@@ -192,6 +249,8 @@ export function startDenglemaMcpServer() {
       process.stderr.write(`Denglema MCP error: ${error?.stack || error}\n`);
     }
   });
+
+  lines.on("close", () => scheduler.stop());
 }
 
 const direct = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
