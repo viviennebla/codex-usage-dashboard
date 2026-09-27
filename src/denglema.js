@@ -144,7 +144,7 @@ export async function runDenglemaCli(options = {}, dependencies = {}) {
     } else {
       console.log("Denglema not bound. Open 蹬了吗 in Feishu and create a pairing code.");
     }
-    return status.bound ? 0 : 1;
+    return 0;
   }
 
   if (action === "bind") {
