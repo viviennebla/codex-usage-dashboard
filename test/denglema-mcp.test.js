@@ -4,7 +4,55 @@ import test from "node:test";
 import {
   DENGLEMA_TOOLS,
   handleDenglemaMcpRequest,
+  nextDenglemaSnapshotDelay,
+  startDenglemaSnapshotScheduler,
 } from "../src/denglema-mcp.js";
+
+test("snapshot scheduler delay targets one hour after the latest observation", () => {
+  const now = new Date("2026-09-27T09:30:00Z");
+  assert.equal(
+    nextDenglemaSnapshotDelay(
+      { observed_at: "2026-09-27T09:00:00.000Z" },
+      now,
+    ),
+    30 * 60 * 1000,
+  );
+  assert.equal(
+    nextDenglemaSnapshotDelay(
+      { observed_at: "2026-09-27T08:00:00.000Z" },
+      now,
+    ),
+    60 * 1000,
+  );
+});
+
+test("snapshot scheduler collects immediately without an agent turn", async () => {
+  let collects = 0;
+  let scheduledDelay = null;
+  let cleared = false;
+
+  const scheduler = startDenglemaSnapshotScheduler({
+    collectDenglemaSnapshot: async () => {
+      collects += 1;
+      return {
+        snapshot: { observed_at: "2026-09-27T09:00:00.000Z" },
+      };
+    },
+    now: () => new Date("2026-09-27T09:30:00Z"),
+    setTimeout: (_fn, delay) => {
+      scheduledDelay = delay;
+      return { unref() {} };
+    },
+    clearTimeout: () => { cleared = true; },
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(collects, 1);
+  assert.equal(scheduledDelay, 30 * 60 * 1000);
+
+  scheduler.stop();
+  assert.equal(cleared, true);
+});
 
 test("MCP initialize advertises only tools", async () => {
   const response = await handleDenglemaMcpRequest({
