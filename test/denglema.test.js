@@ -1,12 +1,27 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
   bindDenglema,
   buildDenglemaUsageSample,
+  collectDenglemaSnapshot,
   getDenglemaStatus,
   syncDenglemaUsage,
+  uploadLatestDenglemaSnapshot,
 } from "../src/denglema.js";
+import { getLatestDenglemaSnapshot } from "../src/denglema-snapshot.js";
+
+async function withTempData(fn) {
+  const dataDir = await mkdtemp(join(tmpdir(), "denglema-test-"));
+  try {
+    return await fn(dataDir);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+}
 
 test("usage sample contains only cumulative daily total", () => {
   const sample = buildDenglemaUsageSample(
@@ -79,9 +94,92 @@ test("bind stores opaque installation credentials returned by pairing", async ()
   });
 });
 
-test("sync uploads one small cumulative sample", async () => {
+test("collector refreshes at most once per hour and overwrites the latest snapshot", async () => withTempData(async (dataDir) => {
+  let scans = 0;
+  let now = new Date("2026-09-27T08:00:00Z");
+  const dependencies = {
+    readConfig: async () => ({ denglema: { timezone: "Asia/Shanghai" } }),
+    collectCodexDailyUsage: async () => {
+      scans += 1;
+      return { date: "2026-09-27", totalTokens: scans * 100 };
+    },
+    env: {},
+    now: () => now,
+  };
+
+  const first = await collectDenglemaSnapshot({ dataDir }, dependencies);
+  assert.equal(first.collected, true);
+  assert.equal(first.snapshot.total_tokens, 100);
+  assert.equal(first.upload_status, "pending");
+
+  now = new Date("2026-09-27T08:59:59Z");
+  const throttled = await collectDenglemaSnapshot({ dataDir }, dependencies);
+  assert.equal(throttled.collected, false);
+  assert.equal(throttled.reason, "not_due");
+  assert.equal(scans, 1);
+
+  now = new Date("2026-09-27T09:00:00Z");
+  const refreshed = await collectDenglemaSnapshot({ dataDir }, dependencies);
+  assert.equal(refreshed.collected, true);
+  assert.equal(refreshed.snapshot.total_tokens, 200);
+  assert.equal(scans, 2);
+
+  const latest = await getLatestDenglemaSnapshot({ dataDir }, { env: {} });
+  assert.equal(latest.snapshot.total_tokens, 200);
+}));
+
+test("upload latest sends the stored snapshot without rescanning", async () => withTempData(async (dataDir) => {
+  let scans = 0;
+  const baseDeps = {
+    readConfig: async () => ({
+      denglema: {
+        server: "https://deng.example",
+        installationId: "inst_1",
+        token: "secret",
+        timezone: "Asia/Shanghai",
+      },
+    }),
+    collectCodexDailyUsage: async () => {
+      scans += 1;
+      return { date: "2026-09-27", totalTokens: 4321 };
+    },
+    env: {},
+    now: () => new Date("2026-09-27T08:00:00Z"),
+  };
+  await collectDenglemaSnapshot({ dataDir, force: true }, baseDeps);
+
   let request;
-  const result = await syncDenglemaUsage({}, {
+  const result = await uploadLatestDenglemaSnapshot({ dataDir }, {
+    ...baseDeps,
+    now: () => new Date("2026-09-27T08:10:00Z"),
+    fetch: async (url, init) => {
+      request = { url, init };
+      return {
+        ok: true,
+        json: async () => ({ installation_id: "inst_1", accepted_total: 4321 }),
+      };
+    },
+  });
+
+  assert.equal(scans, 1);
+  assert.equal(request.url, "https://deng.example/api/usage/sample");
+  assert.equal(request.init.headers.authorization, "Bearer secret");
+  assert.deepEqual(JSON.parse(request.init.body), {
+    schema_version: 1,
+    observed_at: "2026-09-27T08:00:00.000Z",
+    date: "2026-09-27",
+    total_tokens: 4321,
+  });
+  assert.equal(result.upload_status, "uploaded");
+
+  const latest = await getLatestDenglemaSnapshot({ dataDir }, { env: {} });
+  assert.equal(latest.upload_status, "uploaded");
+  assert.equal(latest.last_uploaded_total, 4321);
+}));
+
+test("sync compatibility refreshes then uploads one cumulative sample", async () => withTempData(async (dataDir) => {
+  let request;
+  const result = await syncDenglemaUsage({ dataDir }, {
     readConfig: async () => ({
       denglema: {
         server: "https://deng.example",
@@ -103,7 +201,6 @@ test("sync uploads one small cumulative sample", async () => {
   });
 
   assert.equal(request.url, "https://deng.example/api/usage/sample");
-  assert.equal(request.init.headers.authorization, "Bearer secret");
   assert.deepEqual(JSON.parse(request.init.body), {
     schema_version: 1,
     observed_at: "2026-09-24T09:00:00.000Z",
@@ -111,11 +208,15 @@ test("sync uploads one small cumulative sample", async () => {
     total_tokens: 9001,
   });
   assert.equal(result.sample.total_tokens, 9001);
-});
+}));
 
-test("dry run collects usage without requiring a binding or making HTTP requests", async () => {
+test("dry run refreshes latest without requiring a binding or making HTTP requests", async () => withTempData(async (dataDir) => {
   let fetchCalled = false;
-  const result = await syncDenglemaUsage({ dryRun: true, timezone: "Asia/Shanghai" }, {
+  const result = await syncDenglemaUsage({
+    dataDir,
+    dryRun: true,
+    timezone: "Asia/Shanghai",
+  }, {
     readConfig: async () => ({ denglema: {} }),
     collectCodexDailyUsage: async () => ({ date: "2026-09-24", totalTokens: 4242 }),
     env: {},
@@ -129,5 +230,8 @@ test("dry run collects usage without requiring a binding or making HTTP requests
   assert.equal(fetchCalled, false);
   assert.equal(result.dry_run, true);
   assert.equal(result.sample.total_tokens, 4242);
-  assert.equal(result.server, null);
-});
+
+  const latest = await getLatestDenglemaSnapshot({ dataDir }, { env: {} });
+  assert.equal(latest.snapshot.total_tokens, 4242);
+  assert.equal(latest.upload_status, "pending");
+}));
