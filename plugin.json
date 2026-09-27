@@ -2,9 +2,32 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "denglema",
   "version": "0.1.0",
-  "description": "Upload local Codex token usage to a Denglema team leaderboard.",
-  "author": { "name": "viviennebla" },
+  "description": "Upload local Codex token usage to the internal Denglema team race.",
+  "author": {
+    "name": "viviennebla"
+  },
   "repository": "https://github.com/viviennebla/codex-usage-dashboard",
   "license": "MIT",
-  "keywords": ["codex", "usage", "leaderboard", "vibe-coding"]
+  "keywords": [
+    "codex",
+    "usage",
+    "leaderboard",
+    "vibe-coding"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "蹬了吗",
+        "shortDescription": "把今天的 Codex token 蹬进公司赛道",
+        "longDescription": "绑定当前 Codex 环境并上传当天累计 token。只上传统计值，不上传 prompt、代码或对话内容。",
+        "developerName": "viviennebla",
+        "category": "Productivity",
+        "brandColor": "#E76543",
+        "defaultPrompt": [
+          "同步蹬了吗",
+          "测试同步蹬了吗"
+        ]
+      }
+    }
+  }
 }
