@@ -13,13 +13,14 @@ function windowsToast(title, message, dependencies = {}) {
   const spawn = dependencies.spawnSync || spawnSync;
   const script = [
     "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
-    "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null",
+    "[Windows.UI.Notifications.ToastTemplateType, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
     "$title=[Environment]::GetEnvironmentVariable('DENGLEMA_NOTIFY_TITLE')",
     "$message=[Environment]::GetEnvironmentVariable('DENGLEMA_NOTIFY_MESSAGE')",
-    "$title=[System.Security.SecurityElement]::Escape($title)",
-    "$message=[System.Security.SecurityElement]::Escape($message)",
-    "$xml=New-Object Windows.Data.Xml.Dom.XmlDocument",
-    "$xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text>'+$title+'</text><text>'+$message+'</text></binding></visual></toast>')",
+    "$template=[Windows.UI.Notifications.ToastTemplateType]::ToastText02",
+    "$xml=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($template)",
+    "$texts=$xml.GetElementsByTagName('text')",
+    "$null=$texts.Item(0).AppendChild($xml.CreateTextNode($title))",
+    "$null=$texts.Item(1).AppendChild($xml.CreateTextNode($message))",
     "$toast=[Windows.UI.Notifications.ToastNotification]::new($xml)",
     "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('OpenAI.Codex').Show($toast)",
   ].join("; ");
