@@ -70,6 +70,41 @@ test("new pending snapshot notifies once and persists notification state", async
   assert.equal(calls, 1);
 }));
 
+test("new observation with no token growth does not notify again", async () => withTempData(async (dataDir) => {
+  let calls = 0;
+  const dependencies = {
+    env: {},
+    now: () => new Date("2026-09-27T13:01:00Z"),
+    sendNativeNotification: async () => {
+      calls += 1;
+      return true;
+    },
+  };
+
+  await maybeNotifyDenglemaSnapshot(
+    pendingSnapshot(500),
+    { dataDir },
+    dependencies,
+  );
+
+  const later = {
+    ...pendingSnapshot(500),
+    snapshot: {
+      ...pendingSnapshot(500).snapshot,
+      observed_at: "2026-09-27T13:00:00.000Z",
+    },
+  };
+  const result = await maybeNotifyDenglemaSnapshot(
+    later,
+    { dataDir },
+    dependencies,
+  );
+
+  assert.equal(result.notified, false);
+  assert.equal(result.reason, "no_growth");
+  assert.equal(calls, 1);
+}));
+
 test("uploaded and empty snapshots do not notify", async () => withTempData(async (dataDir) => {
   let calls = 0;
   const dependencies = {
