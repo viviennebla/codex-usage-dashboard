@@ -124,6 +124,12 @@ export async function maybeNotifyDenglemaSnapshot(
   if (state?.observed_at === snapshot.observed_at) {
     return { notified: false, reason: "already_notified" };
   }
+  if (
+    state?.date === snapshot.date
+    && Number(state?.total_tokens) >= Number(snapshot.total_tokens || 0)
+  ) {
+    return { notified: false, reason: "no_growth" };
+  }
 
   const title = "蹬了吗 · 快照已生成";
   const message =
