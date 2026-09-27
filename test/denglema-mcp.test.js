@@ -17,7 +17,7 @@ test("MCP initialize advertises only tools", async () => {
   assert.deepEqual(response.result.capabilities, { tools: { listChanged: false } });
 });
 
-test("MCP tool list exposes status, bind, and sync", async () => {
+test("MCP tool list exposes status, bind, latest, upload, and sync compatibility", async () => {
   const response = await handleDenglemaMcpRequest({
     jsonrpc: "2.0",
     id: 2,
@@ -25,9 +25,16 @@ test("MCP tool list exposes status, bind, and sync", async () => {
   });
   assert.deepEqual(
     response.result.tools.map((tool) => tool.name),
-    ["denglema_status", "denglema_bind", "denglema_sync"],
+    [
+      "denglema_status",
+      "denglema_bind",
+      "denglema_latest_snapshot",
+      "denglema_upload_latest",
+      "denglema_sync",
+    ],
   );
   assert.equal(DENGLEMA_TOOLS[0].annotations.readOnlyHint, true);
+  assert.equal(DENGLEMA_TOOLS[2].annotations.readOnlyHint, true);
 });
 
 test("MCP status never returns a token", async () => {
@@ -70,11 +77,50 @@ test("MCP bind uses the fixed internal service and supplied code", async () => {
   assert.equal(JSON.parse(response.result.content[0].text).installation_id, "inst_2");
 });
 
-test("MCP sync forwards dry_run without uploading semantics of its own", async () => {
-  let options;
+test("MCP latest snapshot is read-only", async () => {
   const response = await handleDenglemaMcpRequest({
     jsonrpc: "2.0",
     id: 5,
+    method: "tools/call",
+    params: { name: "denglema_latest_snapshot", arguments: {} },
+  }, {
+    getLatestDenglemaSnapshot: async () => ({
+      exists: true,
+      upload_status: "pending",
+      snapshot: { date: "2026-09-27", total_tokens: 123 },
+    }),
+  });
+  const value = JSON.parse(response.result.content[0].text);
+  assert.equal(value.upload_status, "pending");
+  assert.equal(value.snapshot.total_tokens, 123);
+});
+
+test("MCP upload latest does not request a rescan", async () => {
+  let called = 0;
+  const response = await handleDenglemaMcpRequest({
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: { name: "denglema_upload_latest", arguments: {} },
+  }, {
+    uploadLatestDenglemaSnapshot: async () => {
+      called += 1;
+      return {
+        ok: true,
+        sample: { date: "2026-09-27", total_tokens: 456 },
+        upload_status: "uploaded",
+      };
+    },
+  });
+  assert.equal(called, 1);
+  assert.equal(JSON.parse(response.result.content[0].text).upload_status, "uploaded");
+});
+
+test("MCP sync keeps manual dry_run compatibility", async () => {
+  let options;
+  const response = await handleDenglemaMcpRequest({
+    jsonrpc: "2.0",
+    id: 7,
     method: "tools/call",
     params: { name: "denglema_sync", arguments: { dry_run: true } },
   }, {
@@ -90,7 +136,7 @@ test("MCP sync forwards dry_run without uploading semantics of its own", async (
 test("MCP tool errors are returned as tool errors", async () => {
   const response = await handleDenglemaMcpRequest({
     jsonrpc: "2.0",
-    id: 6,
+    id: 8,
     method: "tools/call",
     params: { name: "denglema_bind", arguments: {} },
   });
