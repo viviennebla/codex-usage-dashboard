@@ -28,6 +28,20 @@ export function buildDenglemaUsageSample(dailyUsage, observedAt = new Date()) {
   };
 }
 
+export async function getDenglemaStatus(options = {}, dependencies = {}) {
+  const readConfigFn = dependencies.readConfig || readConfig;
+  const config = await readConfigFn(options.configPath);
+  const connection = resolveDenglemaConnection(options, config, dependencies.env || process.env);
+  const server = cleanServer(connection.server);
+  return {
+    bound: Boolean(server && connection.token),
+    server,
+    installation_id: connection.installationId || null,
+    timezone: connection.timezone || null,
+    has_token: Boolean(connection.token),
+  };
+}
+
 export async function bindDenglema(options = {}, dependencies = {}) {
   const readConfigFn = dependencies.readConfig || readConfig;
   const updateConnection = dependencies.updateDenglemaConnection || updateDenglemaConnection;
@@ -73,8 +87,10 @@ export async function syncDenglemaUsage(options = {}, dependencies = {}) {
   const config = await readConfigFn(options.configPath);
   const connection = resolveDenglemaConnection(options, config, dependencies.env || process.env);
   const server = cleanServer(connection.server);
-  if (!server) throw new Error("Denglema is not bound: missing server");
-  if (!connection.token) throw new Error("Denglema is not bound: missing installation token");
+  const dryRun = options.dryRun === true;
+
+  if (!dryRun && !server) throw new Error("Denglema is not bound: missing server");
+  if (!dryRun && !connection.token) throw new Error("Denglema is not bound: missing installation token");
 
   const collectUsage = dependencies.collectCodexDailyUsage || collectCodexDailyUsage;
   const observedAt = dependencies.now?.() || new Date();
@@ -82,21 +98,31 @@ export async function syncDenglemaUsage(options = {}, dependencies = {}) {
     ...options,
     timezone: options.timezone || connection.timezone || undefined,
   }, {
-    loadAllReports: dependencies.loadAllReports,
     now: () => observedAt,
   });
   const sample = buildDenglemaUsageSample(dailyUsage, observedAt);
+
+  if (dryRun) {
+    return {
+      ok: true,
+      dry_run: true,
+      installation_id: connection.installationId || null,
+      server,
+      sample,
+    };
+  }
+
   const response = await fetchFn(`${server}/api/usage/sample`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${connection.token}`,
-      },
-      body: JSON.stringify(sample),
-    });
-    if (!response.ok) {
-      throw new Error(`Usage upload failed: HTTP ${response.status} — ${await response.text()}`);
-    }
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${connection.token}`,
+    },
+    body: JSON.stringify(sample),
+  });
+  if (!response.ok) {
+    throw new Error(`Usage upload failed: HTTP ${response.status} — ${await response.text()}`);
+  }
   const payload = await response.json();
   return {
     ok: true,
@@ -108,18 +134,38 @@ export async function syncDenglemaUsage(options = {}, dependencies = {}) {
 
 export async function runDenglemaCli(options = {}, dependencies = {}) {
   const action = options.denglemaAction || "sync";
+
+  if (action === "status") {
+    const status = await getDenglemaStatus(options, dependencies);
+    if (options.json) {
+      console.log(JSON.stringify(status));
+    } else if (status.bound) {
+      console.log(`Denglema bound: ${status.installation_id || "installation"} → ${status.server}`);
+    } else {
+      console.log("Denglema not bound. Open 蹬了吗 in Feishu and create a pairing code.");
+    }
+    return status.bound ? 0 : 1;
+  }
+
   if (action === "bind") {
     const result = await bindDenglema(options, dependencies);
     console.log(`Denglema bound: ${result.installation_id}`);
     return 0;
   }
+
   if (action === "sync") {
     const result = await syncDenglemaUsage(options, dependencies);
     const tokens = result.sample.total_tokens.toLocaleString("en-US");
-    console.log(`Denglema synced: ${tokens} tokens for ${result.sample.date}`);
+    if (result.dry_run) {
+      console.log(`Denglema dry run: ${tokens} tokens for ${result.sample.date} (nothing uploaded)`);
+    } else {
+      console.log(`Denglema synced: ${tokens} tokens for ${result.sample.date}`);
+    }
     return 0;
   }
-  console.error("Usage: node src/cli.js denglema bind --server <url> --code <pairing-code> [--name <label>]");
-  console.error("       node src/cli.js denglema sync");
+
+  console.error("Usage: node src/cli.js denglema status [--json]");
+  console.error("       node src/cli.js denglema bind --server <url> --code <pairing-code> [--name <label>]");
+  console.error("       node src/cli.js denglema sync [--dry-run]");
   return 2;
 }
