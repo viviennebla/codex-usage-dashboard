@@ -26,8 +26,9 @@ test("snapshot scheduler delay targets one hour after the latest observation", (
   );
 });
 
-test("snapshot scheduler collects immediately without an agent turn", async () => {
+test("snapshot scheduler collects immediately and notifies without an agent turn", async () => {
   let collects = 0;
+  let notifications = 0;
   let scheduledDelay = null;
   let cleared = false;
 
@@ -35,8 +36,14 @@ test("snapshot scheduler collects immediately without an agent turn", async () =
     collectDenglemaSnapshot: async () => {
       collects += 1;
       return {
+        collected: true,
+        upload_status: "pending",
         snapshot: { observed_at: "2026-09-27T09:00:00.000Z" },
       };
+    },
+    maybeNotifyDenglemaSnapshot: async () => {
+      notifications += 1;
+      return { notified: true };
     },
     now: () => new Date("2026-09-27T09:30:00Z"),
     setTimeout: (_fn, delay) => {
@@ -48,10 +55,36 @@ test("snapshot scheduler collects immediately without an agent turn", async () =
 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(collects, 1);
+  assert.equal(notifications, 1);
   assert.equal(scheduledDelay, 30 * 60 * 1000);
 
   scheduler.stop();
   assert.equal(cleared, true);
+});
+
+test("snapshot scheduler keeps running when native notification fails", async () => {
+  let scheduledDelay = null;
+
+  const scheduler = startDenglemaSnapshotScheduler({
+    collectDenglemaSnapshot: async () => ({
+      collected: true,
+      upload_status: "pending",
+      snapshot: { observed_at: "2026-09-27T09:00:00.000Z" },
+    }),
+    maybeNotifyDenglemaSnapshot: async () => {
+      throw new Error("notifications unavailable");
+    },
+    now: () => new Date("2026-09-27T09:30:00Z"),
+    setTimeout: (_fn, delay) => {
+      scheduledDelay = delay;
+      return { unref() {} };
+    },
+    clearTimeout: () => {},
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(scheduledDelay, 30 * 60 * 1000);
+  scheduler.stop();
 });
 
 test("MCP initialize advertises only tools", async () => {
