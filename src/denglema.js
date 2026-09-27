@@ -5,6 +5,15 @@ import {
   resolveDenglemaConnection,
   updateDenglemaConnection,
 } from "./config.js";
+import {
+  DENGLEMA_SNAPSHOT_INTERVAL_MS,
+  acquireDenglemaCollectLock,
+  getLatestDenglemaSnapshot,
+  isDenglemaSnapshotDue,
+  readLatestDenglemaSnapshot,
+  writeDenglemaUploadState,
+  writeLatestDenglemaSnapshot,
+} from "./denglema-snapshot.js";
 import { collectCodexDailyUsage } from "./usage-summary.js";
 
 function cleanServer(value) {
@@ -25,6 +34,18 @@ export function buildDenglemaUsageSample(dailyUsage, observedAt = new Date()) {
     observed_at: observedAt.toISOString(),
     date: dailyUsage.date,
     total_tokens: nonNegativeInteger(dailyUsage.totalTokens),
+  };
+}
+
+function uploadSample(snapshot) {
+  if (!snapshot?.date || !snapshot?.observed_at) {
+    throw new Error("No Denglema snapshot is available to upload");
+  }
+  return {
+    schema_version: 1,
+    observed_at: snapshot.observed_at,
+    date: snapshot.date,
+    total_tokens: nonNegativeInteger(snapshot.total_tokens),
   };
 }
 
@@ -81,36 +102,85 @@ export async function bindDenglema(options = {}, dependencies = {}) {
   };
 }
 
-export async function syncDenglemaUsage(options = {}, dependencies = {}) {
+export async function collectDenglemaSnapshot(options = {}, dependencies = {}) {
+  const readConfigFn = dependencies.readConfig || readConfig;
+  const collectUsage = dependencies.collectCodexDailyUsage || collectCodexDailyUsage;
+  const now = dependencies.now?.() || new Date();
+  const intervalMs = Number.isFinite(Number(options.intervalMs))
+    ? Math.max(0, Number(options.intervalMs))
+    : DENGLEMA_SNAPSHOT_INTERVAL_MS;
+
+  const config = await readConfigFn(options.configPath);
+  const connection = resolveDenglemaConnection(options, config, dependencies.env || process.env);
+  const timezone = options.timezone || connection.timezone || undefined;
+
+  const before = await readLatestDenglemaSnapshot(options, dependencies);
+  if (!options.force && !isDenglemaSnapshotDue(before, now, intervalMs)) {
+    return {
+      ok: true,
+      collected: false,
+      reason: "not_due",
+      ...(await getLatestDenglemaSnapshot(options, dependencies)),
+    };
+  }
+
+  const lock = await acquireDenglemaCollectLock(options, dependencies);
+  if (!lock.acquired) {
+    return {
+      ok: true,
+      collected: false,
+      reason: "busy",
+      ...(await getLatestDenglemaSnapshot(options, dependencies)),
+    };
+  }
+
+  try {
+    const latest = await readLatestDenglemaSnapshot(options, dependencies);
+    if (!options.force && !isDenglemaSnapshotDue(latest, now, intervalMs)) {
+      return {
+        ok: true,
+        collected: false,
+        reason: "not_due",
+        ...(await getLatestDenglemaSnapshot(options, dependencies)),
+      };
+    }
+
+    const dailyUsage = await collectUsage({
+      ...options,
+      timezone,
+    }, {
+      now: () => now,
+    });
+    const sample = buildDenglemaUsageSample(dailyUsage, now);
+    const snapshot = {
+      ...sample,
+      timezone: timezone || null,
+    };
+    await writeLatestDenglemaSnapshot(snapshot, options, dependencies);
+
+    return {
+      ok: true,
+      collected: true,
+      ...(await getLatestDenglemaSnapshot(options, dependencies)),
+    };
+  } finally {
+    await lock.release();
+  }
+}
+
+export async function uploadLatestDenglemaSnapshot(options = {}, dependencies = {}) {
   const readConfigFn = dependencies.readConfig || readConfig;
   const fetchFn = dependencies.fetch || fetch;
+  const now = dependencies.now?.() || new Date();
   const config = await readConfigFn(options.configPath);
   const connection = resolveDenglemaConnection(options, config, dependencies.env || process.env);
   const server = cleanServer(connection.server);
-  const dryRun = options.dryRun === true;
 
-  if (!dryRun && !server) throw new Error("Denglema is not bound: missing server");
-  if (!dryRun && !connection.token) throw new Error("Denglema is not bound: missing installation token");
+  if (!server) throw new Error("Denglema is not bound: missing server");
+  if (!connection.token) throw new Error("Denglema is not bound: missing installation token");
 
-  const collectUsage = dependencies.collectCodexDailyUsage || collectCodexDailyUsage;
-  const observedAt = dependencies.now?.() || new Date();
-  const dailyUsage = await collectUsage({
-    ...options,
-    timezone: options.timezone || connection.timezone || undefined,
-  }, {
-    now: () => observedAt,
-  });
-  const sample = buildDenglemaUsageSample(dailyUsage, observedAt);
-
-  if (dryRun) {
-    return {
-      ok: true,
-      dry_run: true,
-      installation_id: connection.installationId || null,
-      server,
-      sample,
-    };
-  }
+  const latest = await readLatestDenglemaSnapshot(options, dependencies);
+  const sample = uploadSample(latest);
 
   const response = await fetchFn(`${server}/api/usage/sample`, {
     method: "POST",
@@ -123,13 +193,44 @@ export async function syncDenglemaUsage(options = {}, dependencies = {}) {
   if (!response.ok) {
     throw new Error(`Usage upload failed: HTTP ${response.status} — ${await response.text()}`);
   }
+
   const payload = await response.json();
+  await writeDenglemaUploadState({
+    date: sample.date,
+    total_tokens: sample.total_tokens,
+    uploaded_at: now.toISOString(),
+    installation_id: connection.installationId || payload.installation_id || null,
+  }, options, dependencies);
+
   return {
     ok: true,
     installation_id: connection.installationId || payload.installation_id || null,
     sample,
+    upload_status: "uploaded",
     ...payload,
   };
+}
+
+export async function syncDenglemaUsage(options = {}, dependencies = {}) {
+  const collected = await collectDenglemaSnapshot({
+    ...options,
+    force: true,
+  }, dependencies);
+
+  if (!collected.exists || !collected.snapshot) {
+    throw new Error("Denglema could not generate a local snapshot");
+  }
+
+  if (options.dryRun === true) {
+    return {
+      ok: true,
+      dry_run: true,
+      installation_id: null,
+      sample: uploadSample(collected.snapshot),
+    };
+  }
+
+  return uploadLatestDenglemaSnapshot(options, dependencies);
 }
 
 export async function runDenglemaCli(options = {}, dependencies = {}) {
@@ -142,7 +243,7 @@ export async function runDenglemaCli(options = {}, dependencies = {}) {
     } else if (status.bound) {
       console.log(`Denglema bound: ${status.installation_id || "installation"} → ${status.server}`);
     } else {
-      console.log("Denglema not bound. Open 蹬了吗 in Feishu and create a pairing code.");
+      console.log("Denglema not bound. Open Denglema in Feishu and create a pairing code.");
     }
     return 0;
   }
@@ -150,6 +251,25 @@ export async function runDenglemaCli(options = {}, dependencies = {}) {
   if (action === "bind") {
     const result = await bindDenglema(options, dependencies);
     console.log(`Denglema bound: ${result.installation_id}`);
+    return 0;
+  }
+
+  if (action === "snapshot") {
+    const result = await getLatestDenglemaSnapshot(options, dependencies);
+    console.log(JSON.stringify(result));
+    return 0;
+  }
+
+  if (action === "collect") {
+    const result = await collectDenglemaSnapshot(options, dependencies);
+    console.log(JSON.stringify(result));
+    return 0;
+  }
+
+  if (action === "upload") {
+    const result = await uploadLatestDenglemaSnapshot(options, dependencies);
+    const tokens = result.sample.total_tokens.toLocaleString("en-US");
+    console.log(`Denglema uploaded: ${tokens} tokens for ${result.sample.date}`);
     return 0;
   }
 
@@ -166,6 +286,9 @@ export async function runDenglemaCli(options = {}, dependencies = {}) {
 
   console.error("Usage: node src/cli.js denglema status [--json]");
   console.error("       node src/cli.js denglema bind --server <url> --code <pairing-code> [--name <label>]");
+  console.error("       node src/cli.js denglema snapshot");
+  console.error("       node src/cli.js denglema collect");
+  console.error("       node src/cli.js denglema upload");
   console.error("       node src/cli.js denglema sync [--dry-run]");
   return 2;
 }
