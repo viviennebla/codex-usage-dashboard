@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "denglema",
-  "version": "0.1.0",
-  "description": "Upload local Codex token usage to the internal Denglema team race.",
+  "version": "0.1.1",
+  "description": "Sync local Codex token usage to the internal Denglema team race through a bundled local MCP tool.",
   "author": {
     "name": "viviennebla"
   },
