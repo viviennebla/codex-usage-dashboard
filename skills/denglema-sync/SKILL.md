@@ -5,7 +5,7 @@ description: "Inspect, bind, upload, or force-refresh Denglema usage when the us
 
 # Denglema
 
-Normal collection is automatic and local. Bundled lifecycle hooks refresh one latest snapshot at most once per hour while Codex is being used. Hooks do not upload.
+Normal collection is automatic and local. The bundled local MCP runtime refreshes one latest snapshot at most once per hour while Codex is being used. Automatic collection never uploads.
 
 Use the bundled Denglema MCP tools for user-facing actions. Do not shell out to the CLI for normal plugin use.
 
@@ -19,7 +19,7 @@ When the user asks how much they have pedaled, whether a snapshot is ready, or a
 2. Report the snapshot date, token total, observed time, and whether it is pending or already uploaded.
 3. Do not upload unless the user asks.
 
-If no snapshot exists yet, explain that a snapshot is generated automatically during Codex use, at most once per hour.
+If no snapshot exists yet, explain that the local plugin runtime generates one automatically during Codex use, at most once per hour.
 
 ## Upload
 
