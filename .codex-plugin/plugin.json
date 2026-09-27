@@ -3,6 +3,5 @@
   "version": "0.1.2",
   "description": "Keep one hourly local Codex usage snapshot and upload it only on user request.",
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
-  "hooks": "./hooks/hooks.json"
+  "mcpServers": "./.mcp.json"
 }
