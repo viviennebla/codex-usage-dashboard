@@ -1,7 +1,8 @@
 {
   "name": "denglema",
-  "version": "0.1.1",
-  "description": "Upload local Codex token usage to a Denglema team leaderboard.",
+  "version": "0.1.2",
+  "description": "Keep one hourly local Codex usage snapshot and upload it only on user request.",
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json"
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json"
 }
