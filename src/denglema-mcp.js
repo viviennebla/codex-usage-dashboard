@@ -8,6 +8,7 @@ import {
   syncDenglemaUsage,
   uploadLatestDenglemaSnapshot,
 } from "./denglema.js";
+import { maybeNotifyDenglemaSnapshot } from "./denglema-notify.js";
 import {
   DENGLEMA_SNAPSHOT_INTERVAL_MS,
   getLatestDenglemaSnapshot,
@@ -115,6 +116,7 @@ export function nextDenglemaSnapshotDelay(
 
 export function startDenglemaSnapshotScheduler(dependencies = {}) {
   const collect = dependencies.collectDenglemaSnapshot || collectDenglemaSnapshot;
+  const notify = dependencies.maybeNotifyDenglemaSnapshot || maybeNotifyDenglemaSnapshot;
   const setTimer = dependencies.setTimeout || setTimeout;
   const clearTimer = dependencies.clearTimeout || clearTimeout;
   let timer = null;
@@ -126,6 +128,11 @@ export function startDenglemaSnapshotScheduler(dependencies = {}) {
     let delay = ERROR_RETRY_MS;
     try {
       const result = await collect({}, dependencies);
+      if (result?.collected) {
+        try {
+          await notify(result, {}, dependencies);
+        } catch {}
+      }
       const now = dependencies.now?.() || new Date();
       delay = nextDenglemaSnapshotDelay(
         result?.snapshot,
