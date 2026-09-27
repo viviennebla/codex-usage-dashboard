@@ -5,10 +5,12 @@ import {
   bindDenglema,
   getDenglemaStatus,
   syncDenglemaUsage,
+  uploadLatestDenglemaSnapshot,
 } from "./denglema.js";
+import { getLatestDenglemaSnapshot } from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "http://10.21.5.77:1600";
-const SERVER_INFO = { name: "denglema", version: "0.1.1" };
+const SERVER_INFO = { name: "denglema", version: "0.1.2" };
 
 export const DENGLEMA_TOOLS = [
   {
@@ -44,8 +46,32 @@ export const DENGLEMA_TOOLS = [
     },
   },
   {
+    name: "denglema_latest_snapshot",
+    description: "Read the latest local Denglema snapshot and whether it is pending upload. This never scans logs and never uploads.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: {
+      title: "Read latest Denglema snapshot",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "denglema_upload_latest",
+    description: "Upload the current latest local Denglema snapshot. This does not rescan local Codex logs.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: {
+      title: "Upload latest Denglema snapshot",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
     name: "denglema_sync",
-    description: "Collect today's cumulative Codex token usage for this native environment and sync it to Denglema. Set dry_run=true to collect without any network request.",
+    description: "Compatibility/manual action: immediately rescan today's Codex usage and optionally upload it. Prefer latest_snapshot plus upload_latest for normal plugin use.",
     inputSchema: {
       type: "object",
       properties: {
@@ -54,7 +80,7 @@ export const DENGLEMA_TOOLS = [
       additionalProperties: false,
     },
     annotations: {
-      title: "Sync Denglema usage",
+      title: "Force Denglema sync",
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
@@ -73,6 +99,8 @@ function textResult(value, isError = false) {
 async function callDenglemaTool(name, args = {}, dependencies = {}) {
   const status = dependencies.getDenglemaStatus || getDenglemaStatus;
   const bind = dependencies.bindDenglema || bindDenglema;
+  const latest = dependencies.getLatestDenglemaSnapshot || getLatestDenglemaSnapshot;
+  const upload = dependencies.uploadLatestDenglemaSnapshot || uploadLatestDenglemaSnapshot;
   const sync = dependencies.syncDenglemaUsage || syncDenglemaUsage;
 
   if (name === "denglema_status") {
@@ -86,6 +114,12 @@ async function callDenglemaTool(name, args = {}, dependencies = {}) {
       code,
       name: typeof args.name === "string" && args.name.trim() ? args.name.trim() : undefined,
     }, dependencies);
+  }
+  if (name === "denglema_latest_snapshot") {
+    return latest({}, dependencies);
+  }
+  if (name === "denglema_upload_latest") {
+    return upload({}, dependencies);
   }
   if (name === "denglema_sync") {
     return sync({ dryRun: args.dry_run === true }, dependencies);
@@ -107,7 +141,7 @@ export async function handleDenglemaMcpRequest(request, dependencies = {}) {
         protocolVersion: request.params?.protocolVersion || "2025-06-18",
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
-        instructions: "Denglema tracks only cumulative Codex token totals. Use status before bind/sync when binding state is unknown.",
+        instructions: "Denglema keeps one latest local snapshot. Hooks refresh it at most hourly; uploads happen only when the user chooses.",
       },
     };
   }
