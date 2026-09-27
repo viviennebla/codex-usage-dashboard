@@ -102,8 +102,9 @@ Usage:
   node src/cli.js pull
   node src/cli.js register --path <dir> --type codex|claude|skills [--label <name>]
   node src/cli.js skills [list|pull|push|prompt] [advanced options]
+  node src/cli.js denglema status [--json]
   node src/cli.js denglema bind --server <url> --code <pairing-code> [--name <label>]
-  node src/cli.js denglema sync
+  node src/cli.js denglema sync [--dry-run]
   node src/cli.js skills prompt [--path <dir>] [--names a,b|--all] [--json]
 
 Commands:
@@ -117,7 +118,7 @@ Commands:
   pull      Pull snapshots from a remote dashboard server.
   register  Register a custom agent data directory.
   skills       Open the Skills menu, or run a non-interactive subcommand.
-  denglema     Bind this installation or upload today's cumulative Codex usage.
+  denglema     Inspect, bind, or sync this installation with Denglema.
 
 Connection settings are saved in ~/.codex-usage.json. Explicit --server/--token
 options and DASHBOARD_TOKEN still override saved values for automation.
