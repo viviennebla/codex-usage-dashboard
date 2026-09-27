@@ -29,6 +29,7 @@ export function snapshotPaths(options = {}, dependencies = {}) {
     dataDir,
     latest: join(dataDir, "latest.json"),
     uploadState: join(dataDir, "upload-state.json"),
+    notificationState: join(dataDir, "notification-state.json"),
     collectLock: join(dataDir, "collect.lock"),
   };
 }
@@ -65,6 +66,11 @@ export async function readLatestDenglemaSnapshot(options = {}, dependencies = {}
 export async function readDenglemaUploadState(options = {}, dependencies = {}) {
   const paths = snapshotPaths(options, dependencies);
   return readJson(paths.uploadState);
+}
+
+export async function readDenglemaNotificationState(options = {}, dependencies = {}) {
+  const paths = snapshotPaths(options, dependencies);
+  return readJson(paths.notificationState);
 }
 
 export function isDenglemaSnapshotDue(snapshot, now = new Date(), intervalMs = DENGLEMA_SNAPSHOT_INTERVAL_MS) {
@@ -135,6 +141,12 @@ export async function writeLatestDenglemaSnapshot(snapshot, options = {}, depend
 export async function writeDenglemaUploadState(state, options = {}, dependencies = {}) {
   const paths = snapshotPaths(options, dependencies);
   await writeJsonAtomic(paths.uploadState, state);
+  return state;
+}
+
+export async function writeDenglemaNotificationState(state, options = {}, dependencies = {}) {
+  const paths = snapshotPaths(options, dependencies);
+  await writeJsonAtomic(paths.notificationState, state);
   return state;
 }
 
