@@ -32,7 +32,13 @@ test("snapshot scheduler collects immediately and notifies without an agent turn
   let scheduledDelay = null;
   let cleared = false;
 
+  let onboardingChecks = 0;
   const scheduler = startDenglemaSnapshotScheduler({
+    maybeOpenDenglemaOnboarding: async () => {
+      onboardingChecks += 1;
+      return { opened: false, reason: "bound" };
+    },
+    getDenglemaStatus: async () => ({ bound: true }),
     collectDenglemaSnapshot: async () => {
       collects += 1;
       return {
@@ -56,6 +62,7 @@ test("snapshot scheduler collects immediately and notifies without an agent turn
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(collects, 1);
   assert.equal(notifications, 1);
+  assert.equal(onboardingChecks, 1);
   assert.equal(scheduledDelay, 30 * 60 * 1000);
 
   scheduler.stop();
@@ -66,6 +73,8 @@ test("snapshot scheduler keeps running when native notification fails", async ()
   let scheduledDelay = null;
 
   const scheduler = startDenglemaSnapshotScheduler({
+    maybeOpenDenglemaOnboarding: async () => ({ opened: false, reason: "bound" }),
+    getDenglemaStatus: async () => ({ bound: true }),
     collectDenglemaSnapshot: async () => ({
       collected: true,
       upload_status: "pending",

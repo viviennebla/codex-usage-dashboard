@@ -10,7 +10,7 @@ codex plugin add denglema@denglema
 codex plugin list
 ```
 
-安装完成后重新启动 Codex。Plugin 会在 Codex 使用期间自动维护一份本地 latest snapshot；最多每小时刷新一次，不会自动上传。
+安装完成后重新启动 Codex。首次启动时，如果当前 native Codex environment 尚未绑定，Plugin 会自动打开公网 onboarding 页面，并尝试从页面唤起飞书「蹬了吗」。该提示只自动展示一次。Plugin 同时会在 Codex 使用期间自动维护一份本地 latest snapshot；最多每小时刷新一次，不会自动上传。
 
 ## 绑定当前 Codex 环境
 

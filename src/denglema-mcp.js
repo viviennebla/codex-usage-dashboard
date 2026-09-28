@@ -9,13 +9,14 @@ import {
   uploadLatestDenglemaSnapshot,
 } from "./denglema.js";
 import { maybeNotifyDenglemaSnapshot } from "./denglema-notify.js";
+import { maybeOpenDenglemaOnboarding } from "./denglema-onboarding.js";
 import {
   DENGLEMA_SNAPSHOT_INTERVAL_MS,
   getLatestDenglemaSnapshot,
 } from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "http://10.21.5.77:1600";
-const SERVER_INFO = { name: "denglema", version: "0.1.4" };
+const SERVER_INFO = { name: "denglema", version: "0.1.5" };
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
 const ERROR_RETRY_MS = 5 * 60 * 1000;
 
@@ -117,16 +118,26 @@ export function nextDenglemaSnapshotDelay(
 export function startDenglemaSnapshotScheduler(dependencies = {}) {
   const collect = dependencies.collectDenglemaSnapshot || collectDenglemaSnapshot;
   const notify = dependencies.maybeNotifyDenglemaSnapshot || maybeNotifyDenglemaSnapshot;
+  const onboarding = dependencies.maybeOpenDenglemaOnboarding || maybeOpenDenglemaOnboarding;
+  const status = dependencies.getDenglemaStatus || getDenglemaStatus;
   const setTimer = dependencies.setTimeout || setTimeout;
   const clearTimer = dependencies.clearTimeout || clearTimeout;
   let timer = null;
   let stopped = false;
+  let onboardingChecked = false;
 
   async function tick() {
     if (stopped) return;
 
     let delay = ERROR_RETRY_MS;
     try {
+      if (!onboardingChecked) {
+        onboardingChecked = true;
+        try {
+          await onboarding(await status({}, dependencies), {}, dependencies);
+        } catch {}
+      }
+
       const result = await collect({}, dependencies);
       if (result?.collected) {
         try {
