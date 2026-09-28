@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   DENGLEMA_TOOLS,
+  checkDenglemaPluginUpdate,
+  compareDenglemaVersions,
   handleDenglemaMcpRequest,
   nextDenglemaSnapshotDelay,
   startDenglemaSnapshotScheduler,
@@ -127,6 +129,22 @@ test("MCP tool list exposes status, bind, latest, upload, and sync compatibility
   assert.equal(DENGLEMA_TOOLS[2].annotations.readOnlyHint, true);
 });
 
+
+
+test("plugin version comparison and unavailable checks are safe", async () => {
+  assert.equal(compareDenglemaVersions("0.1.11", "0.1.10"), 1);
+  assert.equal(compareDenglemaVersions("0.1.10", "0.1.10"), 0);
+  assert.equal(compareDenglemaVersions("0.1.9", "0.1.10"), -1);
+
+  const result = await checkDenglemaPluginUpdate({
+    fetch: async () => { throw new Error("offline"); },
+  });
+  assert.equal(result.current_version, "0.1.10");
+  assert.equal(result.latest_version, null);
+  assert.equal(result.update_available, false);
+  assert.equal(result.update_check, "unavailable");
+});
+
 test("MCP status never returns a token", async () => {
   const response = await handleDenglemaMcpRequest({
     jsonrpc: "2.0",
@@ -140,9 +158,20 @@ test("MCP status never returns a token", async () => {
       installation_id: "inst_1",
       has_token: true,
     }),
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({ version: "0.1.11" }),
+    }),
   });
   const value = JSON.parse(response.result.content[0].text);
   assert.equal(value.installation_id, "inst_1");
+  assert.equal(value.plugin.current_version, "0.1.10");
+  assert.equal(value.plugin.latest_version, "0.1.11");
+  assert.equal(value.plugin.update_available, true);
+  assert.deepEqual(value.plugin.update_commands, [
+    "codex plugin marketplace upgrade denglema",
+    "codex plugin add denglema@denglema",
+  ]);
   assert.equal(JSON.stringify(value).includes("secret"), false);
 });
 
@@ -173,7 +202,7 @@ test("MCP bind uses the fixed service and uploads the latest snapshot once", asy
     },
   });
   assert.deepEqual(options, {
-    server: "http://10.21.5.77:1600",
+    server: "https://vimo-dev-server.taila62aff.ts.net",
     code: "PAIR-123",
     name: "desk",
   });

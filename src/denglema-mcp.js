@@ -15,10 +15,61 @@ import {
   getLatestDenglemaSnapshot,
 } from "./denglema-snapshot.js";
 
-const DEFAULT_SERVER = "http://10.21.5.77:1600";
-const SERVER_INFO = { name: "denglema", version: "0.1.8" };
+const DEFAULT_SERVER = "https://vimo-dev-server.taila62aff.ts.net";
+const SERVER_INFO = { name: "denglema", version: "0.1.10" };
+const LATEST_PLUGIN_MANIFEST =
+  "https://raw.githubusercontent.com/viviennebla/codex-usage-dashboard/main/plugin.json";
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
 const ERROR_RETRY_MS = 5 * 60 * 1000;
+
+function numericVersion(value) {
+  const match = String(value || "").trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  return match ? match.slice(1).map(Number) : null;
+}
+
+export function compareDenglemaVersions(left, right) {
+  const a = numericVersion(left);
+  const b = numericVersion(right);
+  if (!a || !b) return 0;
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
+  }
+  return 0;
+}
+
+export async function checkDenglemaPluginUpdate(dependencies = {}) {
+  const fetchFn = dependencies.fetch || fetch;
+  const currentVersion = SERVER_INFO.version;
+  const base = {
+    current_version: currentVersion,
+    latest_version: null,
+    update_available: false,
+    update_check: "unavailable",
+    update_commands: [
+      "codex plugin marketplace upgrade denglema",
+      "codex plugin add denglema@denglema",
+    ],
+  };
+
+  try {
+    const response = await fetchFn(LATEST_PLUGIN_MANIFEST, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!response.ok) return { ...base, error: `HTTP ${response.status}` };
+    const manifest = await response.json();
+    const latestVersion = String(manifest?.version || "").trim();
+    if (!numericVersion(latestVersion)) return { ...base, error: "invalid latest version" };
+    return {
+      ...base,
+      latest_version: latestVersion,
+      update_available: compareDenglemaVersions(latestVersion, currentVersion) > 0,
+      update_check: "ok",
+    };
+  } catch (error) {
+    return { ...base, error: error?.message || String(error) };
+  }
+}
 
 export const DENGLEMA_TOOLS = [
   {
@@ -35,7 +86,7 @@ export const DENGLEMA_TOOLS = [
   },
   {
     name: "denglema_bind",
-    description: "Bind this native Codex installation to Denglema with a one-time pairing code from the Feishu page.",
+    description: "Bind this native Codex installation to Denglema with a one-time pairing code from the Denglema web page.",
     inputSchema: {
       type: "object",
       properties: {
@@ -178,7 +229,11 @@ async function callDenglemaTool(name, args = {}, dependencies = {}) {
   const sync = dependencies.syncDenglemaUsage || syncDenglemaUsage;
 
   if (name === "denglema_status") {
-    return status({}, dependencies);
+    const [binding, plugin] = await Promise.all([
+      status({}, dependencies),
+      checkDenglemaPluginUpdate(dependencies),
+    ]);
+    return { ...binding, plugin };
   }
   if (name === "denglema_bind") {
     const code = String(args.code || "").trim();

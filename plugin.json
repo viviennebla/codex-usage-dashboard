@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "denglema",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "description": "Keep hourly local Codex usage snapshots for Denglema, with browser identity, device pairing, and a public race page.",
   "author": {
     "name": "viviennebla"
@@ -19,7 +19,7 @@
       "interface": {
         "displayName": "蹬了吗",
         "shortDescription": "把今天的 Codex token 蹬进公司赛道",
-        "longDescription": "在本地最多每小时生成一份 Codex token 快照；首次绑定会上传当前 latest snapshot，之后由用户选择何时上传。蹬了吗网页使用昵称 + 恢复码身份，不依赖飞书或其他第三方登录。不会上传 prompt、代码或对话内容。",
+        "longDescription": "在本地最多每小时生成一份 Codex token 快照；首次绑定会上传当前 latest snapshot，之后由用户选择何时上传。蹬了吗网页使用昵称 + 恢复码身份，不依赖飞书或其他第三方登录。不会上传 prompt、代码、完整路径或对话内容；schema v2 仅额外上传模型名与 workspace basename 的 token 汇总。",
         "developerName": "viviennebla",
         "category": "Productivity",
         "brandColor": "#E76543",

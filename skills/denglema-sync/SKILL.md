@@ -9,15 +9,27 @@ Normal collection is automatic and local. The bundled local MCP runtime refreshe
 
 Use the bundled Denglema MCP tools for user-facing actions. Do not shell out to the CLI for normal plugin use.
 
-Never read or transmit prompt text, assistant messages, tool contents, source code, project names, model breakdowns, or full transcripts.
+Never read or transmit prompt text, assistant messages, tool contents, source code, full project paths, thread names, or full transcripts. Denglema schema v2 may transmit model names and workspace basenames only as token aggregates.
+
+## Version awareness
+
+For every user-facing Denglema action, call `denglema_status` first. The status result includes `plugin.current_version`, `plugin.latest_version`, and `plugin.update_available`.
+
+If `update_available=true`, append a brief update notice after completing the user's requested action. Give these commands in order:
+
+1. `codex plugin marketplace upgrade denglema`
+2. `codex plugin add denglema@denglema`
+
+Do not claim an update exists when `update_check` is unavailable.
 
 ## View latest snapshot
 
 When the user asks how much they have pedaled, whether a snapshot is ready, or asks to view the latest snapshot:
 
-1. Call `denglema_latest_snapshot`.
-2. Report the snapshot date, token total, observed time, and whether it is pending or already uploaded.
-3. Do not upload unless the user asks.
+1. Call `denglema_status`.
+2. Call `denglema_latest_snapshot`.
+3. Report the snapshot date, token total, observed time, and whether it is pending or already uploaded.
+4. Do not upload unless the user asks.
 
 If no snapshot exists yet, explain that the local plugin runtime generates one automatically during Codex use, at most once per hour.
 
@@ -32,18 +44,20 @@ When the user asks to upload Denglema:
 
 Uploading the latest snapshot must not rescan local Codex logs.
 
-If not bound, tell the user to open Denglema in Feishu, choose the bind-new-device action, and provide a fresh one-time pairing code. Pairing codes expire after five minutes and are consumed after one successful bind. Each native Codex environment needs its own pairing code, but environments paired from the same Feishu account aggregate under the same leaderboard user.
+If not bound, tell the user to open the Denglema web page, choose the bind-new-device action, and provide a fresh one-time pairing code. Pairing codes expire after five minutes and are consumed after one successful bind. Each native Codex environment needs its own pairing code, but environments paired from the same Denglema web identity aggregate under the same leaderboard user.
 
 ## Bind
 
 When the user provides a pairing code:
 
-1. Call `denglema_bind` with the supplied code.
+1. Call `denglema_bind` with the supplied code. Never infer success from the user's wording or from the presence of a pairing code.
 2. Add a friendly installation name only when the user supplied one.
-3. The bind tool automatically uploads the current latest local snapshot once when one exists. It does not rescan logs.
-4. Report whether the initial upload succeeded, was skipped because no snapshot existed, or failed while keeping the binding successful.
+3. Treat the bind as successful only if the tool result explicitly contains `ok: true` and a non-empty `installation_id`. If the tool is unavailable, errors, or does not return an installation ID, say the binding did not complete.
+4. After a successful bind, call `denglema_status` and verify that it reports `bound: true` with the same `installation_id`. If verification fails, report the mismatch instead of saying success.
+5. The bind tool automatically uploads the current latest local snapshot once when one exists. It does not rescan logs.
+6. Report the verified installation ID and whether the initial upload succeeded, was skipped because no snapshot existed, or failed while keeping the binding successful.
 
-Never invent a pairing code, installation ID, user ID, or credential.
+Never invent a pairing code, installation ID, user ID, credential, or binding success.
 
 ## Force refresh and sync
 
@@ -56,11 +70,13 @@ Do not use `denglema_sync` for ordinary upload requests.
 
 ## Privacy
 
-The local snapshot contains only:
+The local snapshot contains:
 
 - leaderboard date
 - observation timestamp
 - cumulative Codex token total
 - local timezone metadata
+- model-name token aggregates
+- workspace-basename token aggregates
 
-The upload contains only the first three fields. The MCP tools never return the installation token.
+The upload excludes prompts, source code, full paths, thread names, assistant messages, tool contents, and full transcripts. The MCP tools never return the installation token.
