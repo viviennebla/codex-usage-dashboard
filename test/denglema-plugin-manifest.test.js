@@ -24,7 +24,7 @@ test("Denglema marketplace is Git-source friendly and versions stay aligned", as
 
   assert.equal(plugin.name, "denglema");
   assert.equal(codexPlugin.name, "denglema");
-  assert.equal(plugin.version, "0.1.5");
+  assert.equal(plugin.version, "0.1.6");
   assert.equal(codexPlugin.version, plugin.version);
   assert.equal(codexPlugin.skills, "./skills/");
   assert.equal(codexPlugin.mcpServers, "./.mcp.json");

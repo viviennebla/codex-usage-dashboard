@@ -146,8 +146,9 @@ test("MCP status never returns a token", async () => {
   assert.equal(JSON.stringify(value).includes("secret"), false);
 });
 
-test("MCP bind uses the fixed internal service and supplied code", async () => {
+test("MCP bind uses the fixed service and uploads the latest snapshot once", async () => {
   let options;
+  let uploads = 0;
   const response = await handleDenglemaMcpRequest({
     jsonrpc: "2.0",
     id: 4,
@@ -158,13 +159,81 @@ test("MCP bind uses the fixed internal service and supplied code", async () => {
       options = value;
       return { ok: true, installation_id: "inst_2" };
     },
+    getLatestDenglemaSnapshot: async () => ({
+      exists: true,
+      snapshot: { date: "2026-09-28", total_tokens: 789 },
+    }),
+    uploadLatestDenglemaSnapshot: async () => {
+      uploads += 1;
+      return {
+        ok: true,
+        sample: { date: "2026-09-28", total_tokens: 789 },
+        upload_status: "uploaded",
+      };
+    },
   });
   assert.deepEqual(options, {
     server: "http://10.21.5.77:1600",
     code: "PAIR-123",
     name: "desk",
   });
-  assert.equal(JSON.parse(response.result.content[0].text).installation_id, "inst_2");
+  const value = JSON.parse(response.result.content[0].text);
+  assert.equal(value.installation_id, "inst_2");
+  assert.deepEqual(value.initial_upload, {
+    status: "uploaded",
+    date: "2026-09-28",
+    total_tokens: 789,
+  });
+  assert.equal(uploads, 1);
+});
+
+test("MCP bind stays successful when there is no local snapshot", async () => {
+  const response = await handleDenglemaMcpRequest({
+    jsonrpc: "2.0",
+    id: 40,
+    method: "tools/call",
+    params: { name: "denglema_bind", arguments: { code: "PAIR-EMPTY" } },
+  }, {
+    bindDenglema: async () => ({ ok: true, installation_id: "inst_empty" }),
+    getLatestDenglemaSnapshot: async () => ({
+      exists: false,
+      snapshot: null,
+      upload_status: "missing",
+    }),
+    uploadLatestDenglemaSnapshot: async () => {
+      throw new Error("upload should not run");
+    },
+  });
+  const value = JSON.parse(response.result.content[0].text);
+  assert.equal(value.installation_id, "inst_empty");
+  assert.deepEqual(value.initial_upload, {
+    status: "skipped",
+    reason: "no_snapshot",
+  });
+});
+
+test("MCP bind preserves binding when initial upload fails", async () => {
+  const response = await handleDenglemaMcpRequest({
+    jsonrpc: "2.0",
+    id: 41,
+    method: "tools/call",
+    params: { name: "denglema_bind", arguments: { code: "PAIR-FAIL" } },
+  }, {
+    bindDenglema: async () => ({ ok: true, installation_id: "inst_fail" }),
+    getLatestDenglemaSnapshot: async () => ({
+      exists: true,
+      snapshot: { date: "2026-09-28", total_tokens: 321 },
+    }),
+    uploadLatestDenglemaSnapshot: async () => {
+      throw new Error("network down");
+    },
+  });
+  const value = JSON.parse(response.result.content[0].text);
+  assert.equal(value.installation_id, "inst_fail");
+  assert.deepEqual(value.initial_upload, {
+    status: "failed",
+    error: "network down",
+  });
 });
 
 test("MCP latest snapshot is read-only", async () => {

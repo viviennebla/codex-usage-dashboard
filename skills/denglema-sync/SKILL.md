@@ -40,7 +40,8 @@ When the user provides a pairing code:
 
 1. Call `denglema_bind` with the supplied code.
 2. Add a friendly installation name only when the user supplied one.
-3. Do not upload automatically after binding. Tell the user whether a local snapshot is available and let them choose whether to upload it.
+3. The bind tool automatically uploads the current latest local snapshot once when one exists. It does not rescan logs.
+4. Report whether the initial upload succeeded, was skipped because no snapshot existed, or failed while keeping the binding successful.
 
 Never invent a pairing code, installation ID, user ID, or credential.
 

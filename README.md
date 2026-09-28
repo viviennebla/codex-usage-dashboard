@@ -22,7 +22,7 @@ codex plugin add denglema@denglema
 
 每个 Windows / WSL / macOS native Codex environment 都需要各自绑定一次；如果 pairing code 都由同一个飞书账号生成，这些 installation 会聚合到排行榜中的同一个用户。
 
-Plugin 在 Codex 使用期间最多每小时生成一份本地 token snapshot，默认不上传。想上传时说 `上传蹬了吗`。详细说明见 `docs/denglema-plugin-install.md`。
+Plugin 在 Codex 使用期间最多每小时生成一份本地 token snapshot。首次绑定成功时会自动上传当前 latest snapshot 一次；之后不会自动上传，想刷新时说 `上传蹬了吗`。详细说明见 `docs/denglema-plugin-install.md`。
 
 ## MVP Release
 
