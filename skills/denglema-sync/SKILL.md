@@ -32,7 +32,7 @@ When the user asks to upload Denglema:
 
 Uploading the latest snapshot must not rescan local Codex logs.
 
-If not bound, tell the user to open Denglema in Feishu, choose the bind-device action, and provide the one-time pairing code.
+If not bound, tell the user to open Denglema in Feishu, choose the bind-new-device action, and provide a fresh one-time pairing code. Pairing codes expire after five minutes and are consumed after one successful bind. Each native Codex environment needs its own pairing code, but environments paired from the same Feishu account aggregate under the same leaderboard user.
 
 ## Bind
 

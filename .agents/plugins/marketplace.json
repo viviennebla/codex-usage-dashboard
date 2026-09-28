@@ -1,7 +1,7 @@
 {
-  "name": "denglema-dev",
+  "name": "denglema",
   "interface": {
-    "displayName": "蹬了吗 · Local Dev"
+    "displayName": "蹬了吗"
   },
   "plugins": [
     {

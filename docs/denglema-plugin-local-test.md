@@ -1,5 +1,7 @@
 # Denglema Plugin — Mac local test
 
+This document is only for local repository development. For normal GitHub Marketplace installation, use `docs/denglema-plugin-install.md`.
+
 The plugin can be installed and tested locally without the company Denglema server.
 
 ## Add the repo marketplace
@@ -12,7 +14,7 @@ codex plugin marketplace add .
 codex plugin marketplace list
 ```
 
-Restart the ChatGPT desktop app after adding or refreshing a local marketplace. In the Plugins Directory, choose **蹬了吗 · Local Dev** and install **蹬了吗**.
+Restart the ChatGPT desktop app after adding or refreshing a local marketplace. In the Plugins Directory, choose **蹬了吗** and install the plugin.
 
 Codex also exposes installed plugins through `/plugins` on supported local clients. See the current OpenAI plugin documentation if the UI differs.
 
@@ -42,9 +44,9 @@ node src/cli.js denglema status --json
 ## Real onboarding
 
 1. Open 「蹬了吗」 in Feishu.
-2. Choose 「绑定设备」 and copy the pairing code.
+2. Choose 「绑定新设备」 and copy the pairing code.
 3. Tell Codex: `绑定蹬了吗 <pairing-code>`.
-4. The skill binds to the internal service and immediately syncs once.
-5. Later, simply say: `同步蹬了吗`.
+4. The skill binds the current native Codex environment. Binding does not upload automatically.
+5. To upload the latest local snapshot, say: `上传蹬了吗`.
 
 The local config stores an opaque installation token. Status output never prints that token.
