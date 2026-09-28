@@ -33,7 +33,7 @@ test("Denglema is a single portable plugin package", async () => {
 
   assert.equal(plugin.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
   assert.equal(plugin.name, "denglema");
-  assert.equal(plugin.version, "0.1.13");
+  assert.equal(plugin.version, "0.1.14");
   assert.equal(plugin.homepage, "https://vimo-dev-server.taila62aff.ts.net/");
   assert.equal(plugin.extensions["com.openai"].interface.websiteURL, plugin.homepage);
 

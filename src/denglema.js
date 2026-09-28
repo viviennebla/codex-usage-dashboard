@@ -306,7 +306,9 @@ export async function runDenglemaCli(options = {}, dependencies = {}) {
 
   if (action === "bind") {
     const result = await bindDenglema(options, dependencies);
-    console.log(`Denglema bound: ${result.installation_id}`);
+    const uploaded = await syncDenglemaUsage({ ...options, dryRun: false }, dependencies);
+    const tokens = uploaded.sample.total_tokens.toLocaleString("en-US");
+    console.log(`Denglema ready: ${result.installation_id} · uploaded ${tokens} tokens for ${uploaded.sample.date}`);
     return 0;
   }
 

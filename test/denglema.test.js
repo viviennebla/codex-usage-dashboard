@@ -12,7 +12,7 @@ import {
   syncDenglemaUsage,
   uploadLatestDenglemaSnapshot,
 } from "../src/denglema.js";
-import { getLatestDenglemaSnapshot, snapshotUploadStatus } from "../src/denglema-snapshot.js";
+import { getLatestDenglemaSnapshot, resolveDenglemaDataDir, snapshotUploadStatus } from "../src/denglema-snapshot.js";
 
 async function withTempData(fn) {
   const dataDir = await mkdtemp(join(tmpdir(), "denglema-test-"));
@@ -22,6 +22,16 @@ async function withTempData(fn) {
     await rm(dataDir, { recursive: true, force: true });
   }
 }
+
+test("Denglema data dir stays stable across plugin runtime env injection", () => {
+  const resolved = resolveDenglemaDataDir({}, {
+    env: {
+      PLUGIN_DATA: "/tmp/plugin-data-should-not-win",
+      CLAUDE_PLUGIN_DATA: "/tmp/claude-plugin-data-should-not-win",
+    },
+  });
+  assert.equal(resolved.endsWith("/.codex-usage/denglema"), true);
+});
 
 test("usage sample contains only cumulative daily total", () => {
   const sample = buildDenglemaUsageSample(

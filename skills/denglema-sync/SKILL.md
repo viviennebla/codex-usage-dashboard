@@ -56,8 +56,8 @@ When the user provides a pairing code:
 2. Add a friendly installation name only when the user supplied one.
 3. Treat the bind as successful only if the tool result explicitly contains `ok: true` and a non-empty `installation_id`. If the tool is unavailable, errors, or does not return an installation ID, say the binding did not complete.
 4. After a successful bind, call `denglema_status` and verify that it reports `bound: true` with the same `installation_id`. If verification fails, report the mismatch instead of saying success.
-5. The bind tool automatically uploads the current latest local snapshot once when one exists. It does not rescan logs.
-6. Report the verified installation ID and whether the initial upload succeeded, was skipped because no snapshot existed, or failed while keeping the binding successful.
+5. The bind tool performs one fresh local collection and immediately uploads that snapshot. This is the only automatic upload in the onboarding flow.
+6. Report the verified installation ID and the initial uploaded date/token total, or the upload failure while keeping the binding successful.
 
 Never invent a pairing code, installation ID, user ID, credential, or binding success.
 

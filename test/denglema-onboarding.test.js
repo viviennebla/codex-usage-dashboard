@@ -28,7 +28,6 @@ test("unbound installation opens onboarding only once", async (t) => {
 
   let opens = 0;
   const dependencies = {
-    env: { PLUGIN_DATA: dataDir },
     now: () => new Date("2026-09-28T03:00:00Z"),
     openDenglemaOnboarding: async (url) => {
       opens += 1;
@@ -37,8 +36,8 @@ test("unbound installation opens onboarding only once", async (t) => {
     },
   };
 
-  const first = await maybeOpenDenglemaOnboarding({ bound: false }, {}, dependencies);
-  const second = await maybeOpenDenglemaOnboarding({ bound: false }, {}, dependencies);
+  const first = await maybeOpenDenglemaOnboarding({ bound: false }, { dataDir }, dependencies);
+  const second = await maybeOpenDenglemaOnboarding({ bound: false }, { dataDir }, dependencies);
   assert.deepEqual(first, { opened: true, reason: "unbound" });
   assert.deepEqual(second, { opened: false, reason: "already_shown" });
   assert.equal(opens, 1);
