@@ -14,7 +14,7 @@ codex plugin marketplace add viviennebla/codex-usage-dashboard
 codex plugin add denglema@denglema
 ```
 
-安装后，在飞书「蹬了吗」中点击 **绑定新设备**，为当前 Codex 环境生成一个 5 分钟有效、一次性的 pairing code，然后对 Codex 说：
+安装后首次启动 Plugin，如果当前环境尚未绑定，会自动打开公网 onboarding 页面；也可以直接在飞书「蹬了吗」中点击 **绑定新设备**，为当前 Codex 环境生成一个 5 分钟有效、一次性的 pairing code，然后对 Codex 说：
 
 ```text
 绑定蹬了吗 <pairing-code>
