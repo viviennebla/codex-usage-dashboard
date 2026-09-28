@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { resolveDenglemaDataDir } from "./denglema-snapshot.js";
 
 export const DENGLEMA_ONBOARDING_URL =
-  "https://vimo-dev-server.taila62aff.ts.net/?action=bind";
+  "https://vimo-dev-server.taila62aff.ts.net/?bind=1";
 const ONBOARDING_STATE_VERSION = 1;
 
 function statePath(options = {}, dependencies = {}) {

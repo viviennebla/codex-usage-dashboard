@@ -1,7 +1,7 @@
 {
   "name": "denglema",
-  "version": "0.1.7",
-  "description": "Keep hourly local Codex usage snapshots, pair through Feishu, and use the shared Denglema entry page.",
+  "version": "0.1.8",
+  "description": "Keep hourly local Codex usage snapshots, pair through the Denglema web page, and upload only when the user chooses.",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json"
 }
