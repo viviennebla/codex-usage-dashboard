@@ -132,14 +132,14 @@ test("MCP tool list exposes status, bind, latest, upload, and sync compatibility
 
 
 test("plugin version comparison and unavailable checks are safe", async () => {
-  assert.equal(compareDenglemaVersions("0.1.11", "0.1.10"), 1);
-  assert.equal(compareDenglemaVersions("0.1.10", "0.1.10"), 0);
-  assert.equal(compareDenglemaVersions("0.1.9", "0.1.10"), -1);
+  assert.equal(compareDenglemaVersions("0.1.12", "0.1.11"), 1);
+  assert.equal(compareDenglemaVersions("0.1.11", "0.1.11"), 0);
+  assert.equal(compareDenglemaVersions("0.1.10", "0.1.11"), -1);
 
   const result = await checkDenglemaPluginUpdate({
     fetch: async () => { throw new Error("offline"); },
   });
-  assert.equal(result.current_version, "0.1.10");
+  assert.equal(result.current_version, "0.1.11");
   assert.equal(result.latest_version, null);
   assert.equal(result.update_available, false);
   assert.equal(result.update_check, "unavailable");
@@ -160,14 +160,31 @@ test("MCP status never returns a token", async () => {
     }),
     fetch: async () => ({
       ok: true,
-      json: async () => ({ version: "0.1.11" }),
+      json: async () => ({ version: "0.1.12" }),
+    }),
+    getLatestDenglemaSnapshot: async () => ({
+      exists: true,
+      upload_status: "pending",
+      snapshot: {
+        schema_version: 2,
+        total_tokens: 1234,
+        models: [{ name: "gpt-5.6-sol", total_tokens: 1000 }],
+        projects: [{ name: "vimo-sop", total_tokens: 1234 }],
+      },
+      last_uploaded_schema_version: 1,
     }),
   });
   const value = JSON.parse(response.result.content[0].text);
   assert.equal(value.installation_id, "inst_1");
-  assert.equal(value.plugin.current_version, "0.1.10");
-  assert.equal(value.plugin.latest_version, "0.1.11");
+  assert.equal(value.plugin.current_version, "0.1.11");
+  assert.equal(value.plugin.latest_version, "0.1.12");
   assert.equal(value.plugin.update_available, true);
+  assert.equal(value.local_snapshot.schema_version, 2);
+  assert.equal(value.local_snapshot.upload_status, "pending");
+  assert.equal(value.local_snapshot.breakdown_upload_pending, true);
+  assert.equal(value.local_snapshot.has_model_breakdown, true);
+  assert.equal(value.local_snapshot.has_project_breakdown, true);
+  assert.equal(value.local_snapshot.last_uploaded_schema_version, 1);
   assert.deepEqual(value.plugin.update_commands, [
     "codex plugin marketplace upgrade denglema",
     "codex plugin add denglema@denglema",

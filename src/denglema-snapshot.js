@@ -100,8 +100,11 @@ function optionsDayKey(date, timezone) {
 
 export function snapshotUploadStatus(snapshot, uploadState) {
   if (!snapshot) return "missing";
+  const snapshotVersion = snapshot.schema_version === 2 ? 2 : 1;
+  const uploadedVersion = uploadState?.schema_version === 2 ? 2 : 1;
   if (
     uploadState?.date === snapshot.date
+    && uploadedVersion >= snapshotVersion
     && Number(uploadState?.total_tokens) >= Number(snapshot.total_tokens)
   ) {
     return "uploaded";
@@ -129,6 +132,7 @@ export async function getLatestDenglemaSnapshot(options = {}, dependencies = {})
     snapshot,
     last_uploaded_at: uploadState?.uploaded_at || null,
     last_uploaded_total: uploadState?.total_tokens ?? null,
+    last_uploaded_schema_version: uploadState?.schema_version === 2 ? 2 : (uploadState ? 1 : null),
   };
 }
 
