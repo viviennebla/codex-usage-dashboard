@@ -12,7 +12,7 @@ import {
   syncDenglemaUsage,
   uploadLatestDenglemaSnapshot,
 } from "../src/denglema.js";
-import { getLatestDenglemaSnapshot } from "../src/denglema-snapshot.js";
+import { getLatestDenglemaSnapshot, snapshotUploadStatus } from "../src/denglema-snapshot.js";
 
 async function withTempData(fn) {
   const dataDir = await mkdtemp(join(tmpdir(), "denglema-test-"));
@@ -36,6 +36,27 @@ test("usage sample contains only cumulative daily total", () => {
     models: [],
     projects: [],
   });
+});
+
+
+
+test("schema v2 snapshot stays pending after only a legacy v1 upload", () => {
+  const snapshot = {
+    schema_version: 2,
+    date: "2026-09-28",
+    total_tokens: 1000,
+    models: [{ name: "gpt-5.6-sol", total_tokens: 1000 }],
+    projects: [{ name: "vimo-sop", total_tokens: 1000 }],
+  };
+  assert.equal(snapshotUploadStatus(snapshot, {
+    date: "2026-09-28",
+    total_tokens: 1000,
+  }), "pending");
+  assert.equal(snapshotUploadStatus(snapshot, {
+    schema_version: 2,
+    date: "2026-09-28",
+    total_tokens: 1000,
+  }), "uploaded");
 });
 
 test("status never exposes the installation token", async () => {
@@ -179,6 +200,7 @@ test("upload latest sends the stored snapshot without rescanning", async () => w
   const latest = await getLatestDenglemaSnapshot({ dataDir }, { env: {} });
   assert.equal(latest.upload_status, "uploaded");
   assert.equal(latest.last_uploaded_total, 4321);
+  assert.equal(latest.last_uploaded_schema_version, 2);
 }));
 
 test("sync compatibility refreshes then uploads one cumulative sample", async () => withTempData(async (dataDir) => {

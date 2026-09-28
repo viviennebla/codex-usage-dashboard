@@ -16,7 +16,7 @@ import {
 } from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "https://vimo-dev-server.taila62aff.ts.net";
-const SERVER_INFO = { name: "denglema", version: "0.1.10" };
+const SERVER_INFO = { name: "denglema", version: "0.1.11" };
 const LATEST_PLUGIN_MANIFEST =
   "https://raw.githubusercontent.com/viviennebla/codex-usage-dashboard/main/plugin.json";
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
@@ -229,11 +229,29 @@ async function callDenglemaTool(name, args = {}, dependencies = {}) {
   const sync = dependencies.syncDenglemaUsage || syncDenglemaUsage;
 
   if (name === "denglema_status") {
-    const [binding, plugin] = await Promise.all([
+    const [binding, plugin, current] = await Promise.all([
       status({}, dependencies),
       checkDenglemaPluginUpdate(dependencies),
+      latest({}, dependencies),
     ]);
-    return { ...binding, plugin };
+    const snapshot = current?.snapshot || null;
+    const snapshotVersion = snapshot?.schema_version === 2 ? 2 : (snapshot ? 1 : null);
+    return {
+      ...binding,
+      plugin,
+      local_snapshot: {
+        exists: Boolean(current?.exists && snapshot),
+        schema_version: snapshotVersion,
+        upload_status: current?.upload_status || "missing",
+        total_tokens: snapshot?.total_tokens ?? null,
+        has_model_breakdown: Array.isArray(snapshot?.models) && snapshot.models.length > 0,
+        has_project_breakdown: Array.isArray(snapshot?.projects) && snapshot.projects.length > 0,
+        last_uploaded_schema_version: current?.last_uploaded_schema_version ?? null,
+        breakdown_upload_pending:
+          snapshotVersion === 2
+          && current?.upload_status !== "uploaded",
+      },
+    };
   }
   if (name === "denglema_bind") {
     const code = String(args.code || "").trim();

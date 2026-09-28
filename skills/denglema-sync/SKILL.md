@@ -22,6 +22,8 @@ If `update_available=true`, append a brief update notice after completing the us
 
 Do not claim an update exists when `update_check` is unavailable.
 
+If `local_snapshot.schema_version=2` and `local_snapshot.breakdown_upload_pending=true`, explain briefly that the local snapshot already contains model/project aggregates but the richer v2 snapshot has not been uploaded yet. Do not upload automatically. If the user asks to upload, `denglema_upload_latest` must upload that v2 snapshot and its breakdowns.
+
 ## View latest snapshot
 
 When the user asks how much they have pedaled, whether a snapshot is ready, or asks to view the latest snapshot:

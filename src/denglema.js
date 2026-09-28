@@ -234,6 +234,7 @@ export async function uploadLatestDenglemaSnapshot(options = {}, dependencies = 
   const payload = await response.json();
   const uploadHttpMs = Date.now() - uploadStarted;
   await writeDenglemaUploadState({
+    schema_version: sample.schema_version,
     date: sample.date,
     total_tokens: sample.total_tokens,
     uploaded_at: now.toISOString(),
