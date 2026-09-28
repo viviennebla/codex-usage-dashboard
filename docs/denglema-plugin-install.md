@@ -8,7 +8,7 @@
 https://vimo-dev-server.taila62aff.ts.net/
 ```
 
-入口页提供三件事：进入飞书赛道、绑定新设备、查看 Plugin 安装命令。浏览器不承担登录，用户身份仍由飞书 H5 免登确认。
+公开地址现在直接进入蹬了吗赛道。第一次使用填写昵称和 emoji，并保存一次性展示的恢复码；换浏览器时用恢复码恢复同一个 rider，不依赖飞书或其他第三方登录。
 
 
 ## 从 GitHub Marketplace 安装
@@ -25,7 +25,7 @@ codex plugin list
 
 ## 绑定当前 Codex 环境
 
-1. 在飞书中打开「蹬了吗」。
+1. 打开蹬了吗网页。
 2. 点击「绑定新设备」，生成一次性 pairing code。
 3. 在当前 Codex 中说：`绑定蹬了吗 <pairing-code>`。
 4. Plugin 使用 pairing code 为当前 native Codex environment 创建独立 installation。
@@ -38,13 +38,13 @@ Pairing code 默认 5 分钟过期，并且成功使用一次后立即失效。
 每个 native Codex environment 都是一个独立 installation，因此需要各自生成一个新的 pairing code：
 
 ```text
-同一个飞书账号
+同一个蹬了吗网页身份
   ├─ Windows Codex  → pairing code A → installation A
   ├─ WSL Codex      → pairing code B → installation B
   └─ macOS Codex    → pairing code C → installation C
 ```
 
-这些 installation 都绑定到同一个飞书账号对应的 internal user ID，服务端按用户聚合 usage，所以排行榜仍然只显示一个人。
+这些 installation 都绑定到同一个蹬了吗网页身份对应的 internal user ID，服务端按用户聚合 usage，所以排行榜仍然只显示一个人。
 
 Windows Plugin 不扫描 WSL 的 Codex Home；WSL Plugin 也不扫描 Windows。这样可以避免重复统计。
 
