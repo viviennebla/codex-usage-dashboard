@@ -132,14 +132,14 @@ test("MCP tool list exposes status, bind, latest, upload, and sync compatibility
 
 
 test("plugin version comparison and unavailable checks are safe", async () => {
-  assert.equal(compareDenglemaVersions("0.1.13", "0.1.12"), 1);
-  assert.equal(compareDenglemaVersions("0.1.12", "0.1.12"), 0);
-  assert.equal(compareDenglemaVersions("0.1.11", "0.1.12"), -1);
+  assert.equal(compareDenglemaVersions("0.1.14", "0.1.13"), 1);
+  assert.equal(compareDenglemaVersions("0.1.13", "0.1.13"), 0);
+  assert.equal(compareDenglemaVersions("0.1.12", "0.1.13"), -1);
 
   const result = await checkDenglemaPluginUpdate({
     fetch: async () => { throw new Error("offline"); },
   });
-  assert.equal(result.current_version, "0.1.12");
+  assert.equal(result.current_version, "0.1.13");
   assert.equal(result.latest_version, null);
   assert.equal(result.update_available, false);
   assert.equal(result.update_check, "unavailable");
@@ -160,7 +160,7 @@ test("MCP status never returns a token", async () => {
     }),
     fetch: async () => ({
       ok: true,
-      json: async () => ({ version: "0.1.13" }),
+      json: async () => ({ version: "0.1.14" }),
     }),
     getLatestDenglemaSnapshot: async () => ({
       exists: true,
@@ -176,8 +176,8 @@ test("MCP status never returns a token", async () => {
   });
   const value = JSON.parse(response.result.content[0].text);
   assert.equal(value.installation_id, "inst_1");
-  assert.equal(value.plugin.current_version, "0.1.12");
-  assert.equal(value.plugin.latest_version, "0.1.13");
+  assert.equal(value.plugin.current_version, "0.1.13");
+  assert.equal(value.plugin.latest_version, "0.1.14");
   assert.equal(value.plugin.update_available, true);
   assert.equal(value.local_snapshot.schema_version, 2);
   assert.equal(value.local_snapshot.upload_status, "pending");
@@ -300,7 +300,7 @@ test("MCP latest snapshot is read-only", async () => {
   assert.equal(value.snapshot.total_tokens, 123);
 });
 
-test("MCP upload latest does not request a rescan", async () => {
+test("MCP upload latest returns an unambiguous compact summary", async () => {
   let called = 0;
   const response = await handleDenglemaMcpRequest({
     jsonrpc: "2.0",
@@ -312,13 +312,38 @@ test("MCP upload latest does not request a rescan", async () => {
       called += 1;
       return {
         ok: true,
-        sample: { date: "2026-09-27", total_tokens: 456 },
+        installation_id: "inst_6",
+        sample: {
+          schema_version: 2,
+          date: "2026-09-27",
+          total_tokens: 456,
+          models: [{ name: "gpt-5.6-sol", total_tokens: 400 }],
+          projects: [{ name: "workspace", total_tokens: 333 }],
+        },
         upload_status: "uploaded",
+        accepted_total: 456,
+        accepted_models: [{ name: "gpt-5.6-sol", total_tokens: 400 }],
+        accepted_projects: [{ name: "workspace", total_tokens: 333 }],
+        timings_ms: { upload_http: 12, total: 15 },
       };
     },
   });
   assert.equal(called, 1);
-  assert.equal(JSON.parse(response.result.content[0].text).upload_status, "uploaded");
+  const value = JSON.parse(response.result.content[0].text);
+  assert.deepEqual(value, {
+    ok: true,
+    upload_status: "uploaded",
+    installation_id: "inst_6",
+    uploaded_date: "2026-09-27",
+    schema_version: 2,
+    uploaded_total_tokens: 456,
+    server_accepted_total_tokens: 456,
+    model_breakdown_count: 1,
+    project_breakdown_count: 1,
+    timings_ms: { upload_http: 12, total: 15 },
+  });
+  assert.equal(JSON.stringify(value).includes("workspace"), false);
+  assert.equal(JSON.stringify(value).includes("gpt-5.6-sol"), false);
 });
 
 test("MCP sync keeps manual dry_run compatibility", async () => {
