@@ -42,7 +42,7 @@ When the user asks to upload Denglema:
 1. Call `denglema_status`.
 2. If bound, call `denglema_latest_snapshot`.
 3. If a snapshot exists, call `denglema_upload_latest`.
-4. Reply briefly with the snapshot date and uploaded token total.
+4. Reply briefly using only `uploaded_date` and `uploaded_total_tokens` from the upload tool result. Do not use token values from model/project breakdown rows as the uploaded total.
 
 Uploading the latest snapshot must not rescan local Codex logs.
 

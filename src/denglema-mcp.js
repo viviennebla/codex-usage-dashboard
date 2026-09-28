@@ -16,7 +16,7 @@ import {
 } from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "https://vimo-dev-server.taila62aff.ts.net";
-const SERVER_INFO = { name: "denglema", version: "0.1.12" };
+const SERVER_INFO = { name: "denglema", version: "0.1.13" };
 const LATEST_PLUGIN_MANIFEST =
   "https://raw.githubusercontent.com/viviennebla/codex-usage-dashboard/main/plugin.json";
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
@@ -289,7 +289,24 @@ async function callDenglemaTool(name, args = {}, dependencies = {}) {
     return latest({}, dependencies);
   }
   if (name === "denglema_upload_latest") {
-    return upload({}, dependencies);
+    const uploaded = await upload({}, dependencies);
+    return {
+      ok: uploaded?.ok === true,
+      upload_status: uploaded?.upload_status || "uploaded",
+      installation_id: uploaded?.installation_id || null,
+      uploaded_date: uploaded?.sample?.date || null,
+      schema_version: uploaded?.sample?.schema_version || null,
+      uploaded_total_tokens: uploaded?.sample?.total_tokens ?? null,
+      server_accepted_total_tokens:
+        uploaded?.accepted_total ?? uploaded?.sample?.total_tokens ?? null,
+      model_breakdown_count: Array.isArray(uploaded?.sample?.models)
+        ? uploaded.sample.models.length
+        : 0,
+      project_breakdown_count: Array.isArray(uploaded?.sample?.projects)
+        ? uploaded.sample.projects.length
+        : 0,
+      timings_ms: uploaded?.timings_ms || null,
+    };
   }
   if (name === "denglema_sync") {
     return sync({ dryRun: args.dry_run === true }, dependencies);
