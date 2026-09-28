@@ -1,0 +1,34 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "denglema",
+  "version": "0.1.4",
+  "description": "Keep one hourly local Codex usage snapshot, notify when a new pending snapshot is ready, and upload only when the user chooses.",
+  "author": {
+    "name": "viviennebla"
+  },
+  "repository": "https://github.com/viviennebla/codex-usage-dashboard",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "usage",
+    "leaderboard",
+    "vibe-coding"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "蹬了吗",
+        "shortDescription": "把今天的 Codex token 蹬进公司赛道",
+        "longDescription": "在本地最多每小时生成一次 Codex token 快照，生成后提醒用户；只有用户明确选择时才上传。不会上传 prompt、代码或对话内容。",
+        "developerName": "viviennebla",
+        "category": "Productivity",
+        "brandColor": "#E76543",
+        "defaultPrompt": [
+          "查看蹬了吗快照",
+          "上传蹬了吗",
+          "立即同步蹬了吗"
+        ]
+      }
+    }
+  }
+}

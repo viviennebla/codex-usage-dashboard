@@ -19,6 +19,7 @@ import {
 import { inspectSource, sourceLabelMap } from "./sources.js";
 import { CodexLimitsClient } from "./codex-limits.js";
 import { runSkillsCli } from "./skills-cli.js";
+import { runDenglemaCli } from "./denglema.js";
 import { createUsageService, SNAPSHOT_REFRESH_POLICIES } from "./application-service.js";
 import {
   configureConnection,
@@ -53,6 +54,9 @@ function parseArgs(argv) {
   if (command === "skills" && rest[0] && !rest[0].startsWith("-")) {
     options.skillsAction = rest.shift();
   }
+  if (command === "denglema" && rest[0] && !rest[0].startsWith("-")) {
+    options.denglemaAction = rest.shift();
+  }
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
     if (arg === "--since") options.since = rest[++index];
@@ -71,6 +75,8 @@ function parseArgs(argv) {
     else if (arg === "--server") options.server = rest[++index];
     else if (arg === "--device") options.device = rest[++index];
     else if (arg === "--token") options.token = rest[++index];
+    else if (arg === "--code") options.code = rest[++index];
+    else if (arg === "--name") options.name = rest[++index];
     else if (arg === "--names") options.names = rest[++index];
     else if (arg === "--strategy") options.strategy = rest[++index];
     else if (arg === "--yes" || arg === "-y") options.yes = true;
@@ -96,6 +102,12 @@ Usage:
   node src/cli.js pull
   node src/cli.js register --path <dir> --type codex|claude|skills [--label <name>]
   node src/cli.js skills [list|pull|push|prompt] [advanced options]
+  node src/cli.js denglema status [--json]
+  node src/cli.js denglema bind --server <url> --code <pairing-code> [--name <label>]
+  node src/cli.js denglema snapshot
+  node src/cli.js denglema collect
+  node src/cli.js denglema upload
+  node src/cli.js denglema sync [--dry-run]
   node src/cli.js skills prompt [--path <dir>] [--names a,b|--all] [--json]
 
 Commands:
@@ -109,6 +121,7 @@ Commands:
   pull      Pull snapshots from a remote dashboard server.
   register  Register a custom agent data directory.
   skills       Open the Skills menu, or run a non-interactive subcommand.
+  denglema     Inspect, bind, collect, or upload the latest Denglema snapshot.
 
 Connection settings are saved in ~/.codex-usage.json. Explicit --server/--token
 options and DASHBOARD_TOKEN still override saved values for automation.
@@ -1023,6 +1036,11 @@ async function main() {
 
   if (options.command === "register") {
     await registerDirectory(options);
+    return;
+  }
+
+  if (options.command === "denglema") {
+    process.exitCode = await runDenglemaCli(options);
     return;
   }
 

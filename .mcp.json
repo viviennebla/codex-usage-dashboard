@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "denglema": {
+      "command": "node",
+      "args": [
+        "./src/denglema-mcp.js"
+      ],
+      "cwd": ".",
+      "enabled": true,
+      "default_tools_approval_mode": "approve",
+      "startup_timeout_sec": 10,
+      "tool_timeout_sec": 60,
+      "omit_tools_from": [
+        "deferred"
+      ]
+    }
+  }
+}

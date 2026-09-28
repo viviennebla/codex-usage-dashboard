@@ -1,0 +1,67 @@
+# 蹬了吗 Codex Plugin 安装与绑定
+
+## 从 GitHub Marketplace 安装
+
+要求：Codex CLI 支持 `plugin marketplace`，并且本机已安装 Node.js 20 或更高版本。
+
+```bash
+codex plugin marketplace add viviennebla/codex-usage-dashboard
+codex plugin add denglema@denglema
+codex plugin list
+```
+
+安装完成后重新启动 Codex。Plugin 会在 Codex 使用期间自动维护一份本地 latest snapshot；最多每小时刷新一次，不会自动上传。
+
+## 绑定当前 Codex 环境
+
+1. 在飞书中打开「蹬了吗」。
+2. 点击「绑定新设备」，生成一次性 pairing code。
+3. 在当前 Codex 中说：`绑定蹬了吗 <pairing-code>`。
+4. Plugin 使用 pairing code 为当前 native Codex environment 创建独立 installation。
+5. 绑定不会自动上传已有 snapshot；需要上传时说：`上传蹬了吗`。
+
+Pairing code 默认 5 分钟过期，并且成功使用一次后立即失效。
+
+## 多设备 / 多环境
+
+每个 native Codex environment 都是一个独立 installation，因此需要各自生成一个新的 pairing code：
+
+```text
+同一个飞书账号
+  ├─ Windows Codex  → pairing code A → installation A
+  ├─ WSL Codex      → pairing code B → installation B
+  └─ macOS Codex    → pairing code C → installation C
+```
+
+这些 installation 都绑定到同一个飞书账号对应的 internal user ID，服务端按用户聚合 usage，所以排行榜仍然只显示一个人。
+
+Windows Plugin 不扫描 WSL 的 Codex Home；WSL Plugin 也不扫描 Windows。这样可以避免重复统计。
+
+## 日常使用
+
+普通使用不需要手工扫描：
+
+- Plugin runtime 在 Codex 使用期间最多每小时生成一份新的本地 snapshot；
+- 只保留 latest snapshot；
+- 新的 pending snapshot 可以触发本机通知；
+- 不会自动上传；
+- 用户明确说 `上传蹬了吗` 时，上传当前 latest snapshot，不重新扫描日志。
+
+上传字段只有 leaderboard date、observation timestamp 和 cumulative token total。不会上传 prompt、代码、项目名、模型 breakdown 或完整对话。
+
+## 开发分支验证
+
+尚未合并到 `main` 时，可显式指定 Git ref：
+
+```bash
+codex plugin marketplace add viviennebla/codex-usage-dashboard --ref feat/denglema-plugin-upload
+codex plugin add denglema@denglema
+```
+
+本地 marketplace 调试仍可使用：
+
+```bash
+codex plugin marketplace add .
+```
+
+本地 source 仅用于开发，不是同事的正式安装流程。

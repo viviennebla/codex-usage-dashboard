@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -91,4 +91,95 @@ test("incrementally parses appended Codex JSONL records", async () => {
   assert.equal(fileCache.stats().incrementalParses, 1);
   assert.deepEqual(incremental.events, full.events);
   assert.deepEqual(incremental.daily, full.daily);
+});
+
+test("activitySince keeps long-lived sessions with recent tail activity", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "codex-activity-filter-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const sessions = join(home, "sessions", "2026", "01", "01");
+  await mkdir(sessions, { recursive: true });
+
+  const recentFile = join(sessions, "rollout-recent.jsonl");
+  const oldFile = join(sessions, "rollout-old.jsonl");
+  const makeRows = (timestamp, sessionId, totalTokens) => [
+    { timestamp, type: "session_meta", payload: { id: sessionId, cwd: "/tmp/project" } },
+    {
+      timestamp,
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          last_token_usage: {
+            input_tokens: totalTokens,
+            output_tokens: 0,
+            total_tokens: totalTokens,
+          },
+        },
+      },
+    },
+  ];
+
+  await writeFile(
+    recentFile,
+    makeRows("2026-09-24T01:00:00.000Z", "recent-session", 42)
+      .map((row) => JSON.stringify(row)).join("\n") + "\n",
+  );
+  await writeFile(
+    oldFile,
+    makeRows("2026-01-01T01:00:00.000Z", "old-session", 99)
+      .map((row) => JSON.stringify(row)).join("\n") + "\n",
+  );
+
+  const oldMtime = new Date("2026-01-02T00:00:00.000Z");
+  await utimes(recentFile, oldMtime, oldMtime);
+  await utimes(oldFile, oldMtime, oldMtime);
+
+  const report = await loadCodexReports({
+    codexHomes: [home],
+    rawOnly: true,
+    usageOnly: true,
+    since: "2026-09-23T16:00:00.000Z",
+    activitySince: "2026-09-23T16:00:00.000Z",
+  });
+
+  assert.equal(report.tool.filesRead, 1);
+  assert.equal(report.events.length, 1);
+  assert.equal(report.events[0].totalTokens, 42);
+});
+
+test("omitting activitySince preserves full file scanning", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "codex-full-scan-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const sessions = join(home, "sessions", "2026", "01", "01");
+  await mkdir(sessions, { recursive: true });
+
+  const writeSession = async (name, timestamp, totalTokens) => {
+    const file = join(sessions, name);
+    await writeFile(file, [
+      { timestamp, type: "session_meta", payload: { id: name, cwd: "/tmp/project" } },
+      {
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: { input_tokens: totalTokens, output_tokens: 0, total_tokens: totalTokens } },
+        },
+      },
+    ].map((row) => JSON.stringify(row)).join("\n") + "\n");
+    return file;
+  };
+
+  await writeSession("rollout-old.jsonl", "2026-01-01T01:00:00.000Z", 99);
+  await writeSession("rollout-recent.jsonl", "2026-09-24T01:00:00.000Z", 42);
+
+  const report = await loadCodexReports({
+    codexHomes: [home],
+    rawOnly: true,
+    usageOnly: true,
+    since: "2026-09-23T16:00:00.000Z",
+  });
+
+  assert.equal(report.tool.filesRead, 2);
+  assert.equal(report.events.length, 1);
+  assert.equal(report.events[0].totalTokens, 42);
 });

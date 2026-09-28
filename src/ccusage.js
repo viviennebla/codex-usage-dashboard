@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { access, readFile, readdir } from "node:fs/promises";
+import { access, open, readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline";
 import { codexEnvironmentForHome, resolveCodexHomes } from "./sources.js";
@@ -7,6 +7,7 @@ import { dayKey } from "./time.js";
 
 const DATE_ONLY = /^(\d{4})-?(\d{2})-?(\d{2})$/;
 const CODEX_GENERATED_DATE_DIR = /^\d{4}-\d{2}-\d{2}$/;
+const ACTIVITY_TAIL_BYTES = 256 * 1024;
 function number(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
 }
@@ -156,13 +157,48 @@ async function walkJsonl(root, out = []) {
   return out;
 }
 
-async function collectSessionFiles(homes, labels = new Map()) {
+async function latestTimestampFromTail(file, size) {
+  if (!size) return null;
+  const length = Math.min(size, ACTIVITY_TAIL_BYTES);
+  const buffer = Buffer.allocUnsafe(length);
+  const handle = await open(file, "r");
+  try {
+    const { bytesRead } = await handle.read(buffer, 0, length, size - length);
+    const lines = buffer.subarray(0, bytesRead).toString("utf8").split(/\r?\n/);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      if (!lines[index].trim()) continue;
+      try {
+        const entry = JSON.parse(lines[index]);
+        const timestamp = entry.timestamp || entry.payload?.timestamp;
+        const ms = Date.parse(timestamp || "");
+        if (Number.isFinite(ms)) return ms;
+      } catch {
+        // The first tail line may be a partial JSON record.
+      }
+    }
+    return null;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function hasActivitySince(file, sinceMs) {
+  const info = await stat(file);
+  if (info.mtimeMs >= sinceMs) return true;
+  const latest = await latestTimestampFromTail(file, info.size);
+  // If the tail is not parseable, keep the file as a conservative fallback.
+  return latest === null || latest >= sinceMs;
+}
+
+async function collectSessionFiles(homes, labels = new Map(), options = {}) {
   const files = new Map();
+  const activitySince = parseDateFilter(options.activitySince);
   for (const [index, home] of homes.entries()) {
     const meta = codexHomeMeta(home, labels, index + 1);
     for (const source of ["archived_sessions", "sessions"]) {
       const root = join(home, source);
       for (const file of await walkJsonl(root)) {
+        if (activitySince && !(await hasActivitySince(file, activitySince))) continue;
         const key = relative(root, file).replace(/\\/g, "/");
         files.set(`${home}|${key}`, {
           file,
@@ -619,9 +655,9 @@ function buildTotals(events) {
 
 export async function loadCodexReports(options = {}) {
   const homes = await codexHomes(options);
-  const files = await collectSessionFiles(homes, options.sourceLabels || new Map());
-  const sessionIndex = await loadSessionIndex(homes);
-  const threadStateIndex = await loadThreadStateIndex(homes);
+  const files = await collectSessionFiles(homes, options.sourceLabels || new Map(), options);
+  const sessionIndex = options.usageOnly ? new Map() : await loadSessionIndex(homes);
+  const threadStateIndex = options.usageOnly ? new Map() : await loadThreadStateIndex(homes);
   const parseCache = options.fileCache || null;
   const nestedResults = await Promise.all(
     files.map((file) => {

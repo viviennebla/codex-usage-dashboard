@@ -4,6 +4,26 @@
 
 ![Dashboard Screenshot](public/screenshot.png)
 
+
+## 蹬了吗 Codex Plugin
+
+本仓库同时提供「蹬了吗」Codex Plugin。正式安装不需要先 clone 仓库：
+
+```bash
+codex plugin marketplace add viviennebla/codex-usage-dashboard
+codex plugin add denglema@denglema
+```
+
+安装后，在飞书「蹬了吗」中点击 **绑定新设备**，为当前 Codex 环境生成一个 5 分钟有效、一次性的 pairing code，然后对 Codex 说：
+
+```text
+绑定蹬了吗 <pairing-code>
+```
+
+每个 Windows / WSL / macOS native Codex environment 都需要各自绑定一次；如果 pairing code 都由同一个飞书账号生成，这些 installation 会聚合到排行榜中的同一个用户。
+
+Plugin 在 Codex 使用期间最多每小时生成一份本地 token snapshot，默认不上传。想上传时说 `上传蹬了吗`。详细说明见 `docs/denglema-plugin-install.md`。
+
 ## MVP Release
 
 `v0.2.0-mvp` 是一个源码版 MVP release：Codex Usage Dashboard 已经覆盖 usage、cost、rate limits、sources、model / project / session breakdown，以及跨设备 usage snapshot 和 Skill Bundles 同步。当前仓库没有发布 npm 包或二进制安装包，推荐通过 Git tag 拉取源码运行。
