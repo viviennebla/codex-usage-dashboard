@@ -32,18 +32,20 @@ When the user asks to upload Denglema:
 
 Uploading the latest snapshot must not rescan local Codex logs.
 
-If not bound, tell the user to open Denglema in Feishu, choose the bind-new-device action, and provide a fresh one-time pairing code. Pairing codes expire after five minutes and are consumed after one successful bind. Each native Codex environment needs its own pairing code, but environments paired from the same Feishu account aggregate under the same leaderboard user.
+If not bound, tell the user to open the Denglema web page, choose the bind-new-device action, and provide a fresh one-time pairing code. Pairing codes expire after five minutes and are consumed after one successful bind. Each native Codex environment needs its own pairing code, but environments paired from the same Denglema web identity aggregate under the same leaderboard user.
 
 ## Bind
 
 When the user provides a pairing code:
 
-1. Call `denglema_bind` with the supplied code.
+1. Call `denglema_bind` with the supplied code. Never infer success from the user's wording or from the presence of a pairing code.
 2. Add a friendly installation name only when the user supplied one.
-3. The bind tool automatically uploads the current latest local snapshot once when one exists. It does not rescan logs.
-4. Report whether the initial upload succeeded, was skipped because no snapshot existed, or failed while keeping the binding successful.
+3. Treat the bind as successful only if the tool result explicitly contains `ok: true` and a non-empty `installation_id`. If the tool is unavailable, errors, or does not return an installation ID, say the binding did not complete.
+4. After a successful bind, call `denglema_status` and verify that it reports `bound: true` with the same `installation_id`. If verification fails, report the mismatch instead of saying success.
+5. The bind tool automatically uploads the current latest local snapshot once when one exists. It does not rescan logs.
+6. Report the verified installation ID and whether the initial upload succeeded, was skipped because no snapshot existed, or failed while keeping the binding successful.
 
-Never invent a pairing code, installation ID, user ID, or credential.
+Never invent a pairing code, installation ID, user ID, credential, or binding success.
 
 ## Force refresh and sync
 

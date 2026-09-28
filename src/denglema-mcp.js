@@ -15,8 +15,8 @@ import {
   getLatestDenglemaSnapshot,
 } from "./denglema-snapshot.js";
 
-const DEFAULT_SERVER = "http://10.21.5.77:1600";
-const SERVER_INFO = { name: "denglema", version: "0.1.9" };
+const DEFAULT_SERVER = "https://vimo-dev-server.taila62aff.ts.net";
+const SERVER_INFO = { name: "denglema", version: "0.1.10" };
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
 const ERROR_RETRY_MS = 5 * 60 * 1000;
 
