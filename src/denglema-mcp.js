@@ -16,7 +16,7 @@ import {
 } from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "http://10.21.5.77:1600";
-const SERVER_INFO = { name: "denglema", version: "0.1.6" };
+const SERVER_INFO = { name: "denglema", version: "0.1.7" };
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
 const ERROR_RETRY_MS = 5 * 60 * 1000;
 
