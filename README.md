@@ -7,6 +7,13 @@
 
 ## 蹬了吗 Codex Plugin
 
+### 统一入口
+
+公开分享入口：`https://vimo-dev-server.taila62aff.ts.net/`
+
+这里可以进入飞书赛道、绑定新设备，或查看 Codex Plugin 的正式安装命令。浏览器页面本身不保存飞书身份；个人数据仍只在飞书 H5 中通过免登读取。
+
+
 本仓库同时提供「蹬了吗」Codex Plugin。正式安装不需要先 clone 仓库：
 
 ```bash
@@ -14,7 +21,7 @@ codex plugin marketplace add viviennebla/codex-usage-dashboard
 codex plugin add denglema@denglema
 ```
 
-安装后首次启动 Plugin，如果当前环境尚未绑定，会自动打开公网 onboarding 页面；也可以直接在飞书「蹬了吗」中点击 **绑定新设备**，为当前 Codex 环境生成一个 5 分钟有效、一次性的 pairing code，然后对 Codex 说：
+安装后首次启动 Plugin，如果当前环境尚未绑定，会自动打开统一入口的绑定模式；也可以直接在飞书「蹬了吗」中点击 **绑定新设备**，为当前 Codex 环境生成一个 5 分钟有效、一次性的 pairing code，然后对 Codex 说：
 
 ```text
 绑定蹬了吗 <pairing-code>

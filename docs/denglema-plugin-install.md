@@ -1,5 +1,16 @@
 # 蹬了吗 Codex Plugin 安装与绑定
 
+## 统一入口
+
+公开分享入口：
+
+```text
+https://vimo-dev-server.taila62aff.ts.net/
+```
+
+入口页提供三件事：进入飞书赛道、绑定新设备、查看 Plugin 安装命令。浏览器不承担登录，用户身份仍由飞书 H5 免登确认。
+
+
 ## 从 GitHub Marketplace 安装
 
 要求：Codex CLI 支持 `plugin marketplace`，并且本机已安装 Node.js 20 或更高版本。
@@ -10,7 +21,7 @@ codex plugin add denglema@denglema
 codex plugin list
 ```
 
-安装完成后重新启动 Codex。首次启动时，如果当前 native Codex environment 尚未绑定，Plugin 会自动打开公网 onboarding 页面，并尝试从页面唤起飞书「蹬了吗」。该提示只自动展示一次。Plugin 同时会在 Codex 使用期间自动维护一份本地 latest snapshot；最多每小时刷新一次，不会自动上传。
+安装完成后重新启动 Codex。首次启动时，如果当前 native Codex environment 尚未绑定，Plugin 会自动打开统一入口的绑定模式，并尝试从页面唤起飞书「蹬了吗」。该提示只自动展示一次。Plugin 同时会在 Codex 使用期间自动维护一份本地 latest snapshot；最多每小时刷新一次，不会自动上传。
 
 ## 绑定当前 Codex 环境
 

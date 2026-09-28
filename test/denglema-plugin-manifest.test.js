@@ -24,8 +24,10 @@ test("Denglema marketplace is Git-source friendly and versions stay aligned", as
 
   assert.equal(plugin.name, "denglema");
   assert.equal(codexPlugin.name, "denglema");
-  assert.equal(plugin.version, "0.1.6");
+  assert.equal(plugin.version, "0.1.7");
   assert.equal(codexPlugin.version, plugin.version);
+  assert.equal(plugin.homepage, "https://vimo-dev-server.taila62aff.ts.net/");
+  assert.equal(plugin.extensions["com.openai"].interface.websiteURL, plugin.homepage);
   assert.equal(codexPlugin.skills, "./skills/");
   assert.equal(codexPlugin.mcpServers, "./.mcp.json");
 });
