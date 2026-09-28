@@ -1,6 +1,6 @@
 {
   "name": "denglema",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Keep one hourly local Codex usage snapshot, notify when ready, and upload only on user request.",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json"

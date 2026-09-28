@@ -18,7 +18,7 @@ codex plugin list
 2. 点击「绑定新设备」，生成一次性 pairing code。
 3. 在当前 Codex 中说：`绑定蹬了吗 <pairing-code>`。
 4. Plugin 使用 pairing code 为当前 native Codex environment 创建独立 installation。
-5. 绑定不会自动上传已有 snapshot；需要上传时说：`上传蹬了吗`。
+5. 首次绑定成功后会自动上传当前已有的 latest snapshot 一次，不重新扫描日志；后续手动上传时说：`上传蹬了吗`。
 
 Pairing code 默认 5 分钟过期，并且成功使用一次后立即失效。
 

@@ -16,7 +16,7 @@ import {
 } from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "http://10.21.5.77:1600";
-const SERVER_INFO = { name: "denglema", version: "0.1.5" };
+const SERVER_INFO = { name: "denglema", version: "0.1.6" };
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
 const ERROR_RETRY_MS = 5 * 60 * 1000;
 
@@ -183,11 +183,34 @@ async function callDenglemaTool(name, args = {}, dependencies = {}) {
   if (name === "denglema_bind") {
     const code = String(args.code || "").trim();
     if (!code) throw new Error("pairing code is required");
-    return bind({
+    const bound = await bind({
       server: DEFAULT_SERVER,
       code,
       name: typeof args.name === "string" && args.name.trim() ? args.name.trim() : undefined,
     }, dependencies);
+
+    let initialUpload = { status: "skipped", reason: "no_snapshot" };
+    try {
+      const current = await latest({}, dependencies);
+      if (current?.exists && current?.snapshot) {
+        const uploaded = await upload({}, dependencies);
+        initialUpload = {
+          status: "uploaded",
+          date: uploaded?.sample?.date || current.snapshot.date || null,
+          total_tokens: uploaded?.sample?.total_tokens ?? current.snapshot.total_tokens ?? null,
+        };
+      }
+    } catch (error) {
+      initialUpload = {
+        status: "failed",
+        error: error?.message || String(error),
+      };
+    }
+
+    return {
+      ...bound,
+      initial_upload: initialUpload,
+    };
   }
   if (name === "denglema_latest_snapshot") {
     return latest({}, dependencies);
