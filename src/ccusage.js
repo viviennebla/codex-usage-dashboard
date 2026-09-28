@@ -654,11 +654,14 @@ function buildTotals(events) {
 }
 
 export async function loadCodexReports(options = {}) {
+  const scanStarted = Date.now();
   const homes = await codexHomes(options);
   const files = await collectSessionFiles(homes, options.sourceLabels || new Map(), options);
+  const scanCandidatesMs = Date.now() - scanStarted;
   const sessionIndex = options.usageOnly ? new Map() : await loadSessionIndex(homes);
   const threadStateIndex = options.usageOnly ? new Map() : await loadThreadStateIndex(homes);
   const parseCache = options.fileCache || null;
+  const parseStarted = Date.now();
   const nestedResults = await Promise.all(
     files.map((file) => {
       const parse = (range) => parseSessionFile(file, sessionIndex, threadStateIndex, options, null, range);
@@ -686,6 +689,7 @@ export async function loadCodexReports(options = {}) {
       });
     }),
   );
+  const parseActiveSessionsMs = Date.now() - parseStarted;
   parseCache?.prune("codex", files.map((file) => file.file));
   const events = nestedResults.flatMap((r) => r.events);
   if (!options.rawOnly) events.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
@@ -723,6 +727,10 @@ export async function loadCodexReports(options = {}) {
       events,
       skills: tools,
       tool,
+      timingsMs: {
+        scanCandidates: scanCandidatesMs,
+        parseActiveSessions: parseActiveSessionsMs,
+      },
     };
   }
   const totals = buildTotals(events);
@@ -780,5 +788,9 @@ export async function loadCodexReports(options = {}) {
     events,
     skills: tools,
     tool,
+    timingsMs: {
+      scanCandidates: scanCandidatesMs,
+      parseActiveSessions: parseActiveSessionsMs,
+    },
   };
 }

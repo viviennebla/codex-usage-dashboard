@@ -16,7 +16,7 @@ import {
 } from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "http://10.21.5.77:1600";
-const SERVER_INFO = { name: "denglema", version: "0.1.8" };
+const SERVER_INFO = { name: "denglema", version: "0.1.9" };
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
 const ERROR_RETRY_MS = 5 * 60 * 1000;
 
@@ -35,7 +35,7 @@ export const DENGLEMA_TOOLS = [
   },
   {
     name: "denglema_bind",
-    description: "Bind this native Codex installation to Denglema with a one-time pairing code from the Feishu page.",
+    description: "Bind this native Codex installation to Denglema with a one-time pairing code from the Denglema web page.",
     inputSchema: {
       type: "object",
       properties: {

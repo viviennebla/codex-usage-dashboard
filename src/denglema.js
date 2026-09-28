@@ -27,13 +27,29 @@ function nonNegativeInteger(value) {
   return Number.isFinite(number) && number >= 0 ? Math.round(number) : 0;
 }
 
+function normalizeDimensionRows(rows = []) {
+  const totals = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const name = String(row?.name || "").trim().slice(0, 96);
+    if (!name) continue;
+    const tokens = nonNegativeInteger(row?.total_tokens ?? row?.totalTokens);
+    if (tokens <= 0) continue;
+    totals.set(name, (totals.get(name) || 0) + tokens);
+  }
+  return [...totals.entries()]
+    .map(([name, total_tokens]) => ({ name, total_tokens }))
+    .sort((a, b) => b.total_tokens - a.total_tokens || a.name.localeCompare(b.name));
+}
+
 export function buildDenglemaUsageSample(dailyUsage, observedAt = new Date()) {
   if (!dailyUsage?.date) throw new Error("No usage data is available for today");
   return {
-    schema_version: 1,
+    schema_version: 2,
     observed_at: observedAt.toISOString(),
     date: dailyUsage.date,
     total_tokens: nonNegativeInteger(dailyUsage.totalTokens),
+    models: normalizeDimensionRows(dailyUsage.models),
+    projects: normalizeDimensionRows(dailyUsage.projects),
   };
 }
 
@@ -41,11 +57,16 @@ function uploadSample(snapshot) {
   if (!snapshot?.date || !snapshot?.observed_at) {
     throw new Error("No Denglema snapshot is available to upload");
   }
+  const version = snapshot.schema_version === 2 ? 2 : 1;
   return {
-    schema_version: 1,
+    schema_version: version,
     observed_at: snapshot.observed_at,
     date: snapshot.date,
     total_tokens: nonNegativeInteger(snapshot.total_tokens),
+    ...(version === 2 ? {
+      models: normalizeDimensionRows(snapshot.models),
+      projects: normalizeDimensionRows(snapshot.projects),
+    } : {}),
   };
 }
 
@@ -103,6 +124,7 @@ export async function bindDenglema(options = {}, dependencies = {}) {
 }
 
 export async function collectDenglemaSnapshot(options = {}, dependencies = {}) {
+  const totalStarted = Date.now();
   const readConfigFn = dependencies.readConfig || readConfig;
   const collectUsage = dependencies.collectCodexDailyUsage || collectCodexDailyUsage;
   const now = dependencies.now?.() || new Date();
@@ -121,6 +143,7 @@ export async function collectDenglemaSnapshot(options = {}, dependencies = {}) {
       collected: false,
       reason: "not_due",
       ...(await getLatestDenglemaSnapshot(options, dependencies)),
+      timings_ms: { total: Date.now() - totalStarted },
     };
   }
 
@@ -131,6 +154,7 @@ export async function collectDenglemaSnapshot(options = {}, dependencies = {}) {
       collected: false,
       reason: "busy",
       ...(await getLatestDenglemaSnapshot(options, dependencies)),
+      timings_ms: { total: Date.now() - totalStarted },
     };
   }
 
@@ -156,12 +180,23 @@ export async function collectDenglemaSnapshot(options = {}, dependencies = {}) {
       ...sample,
       timezone: timezone || null,
     };
+
+    const writeStarted = Date.now();
     await writeLatestDenglemaSnapshot(snapshot, options, dependencies);
+    const writeSnapshotMs = Date.now() - writeStarted;
+    const latestResult = await getLatestDenglemaSnapshot(options, dependencies);
 
     return {
       ok: true,
       collected: true,
-      ...(await getLatestDenglemaSnapshot(options, dependencies)),
+      ...latestResult,
+      timings_ms: {
+        scan_candidates: Number(dailyUsage.timingsMs?.scanCandidates || 0),
+        parse_active_sessions: Number(dailyUsage.timingsMs?.parseActiveSessions || 0),
+        aggregate_models_projects: Number(dailyUsage.timingsMs?.aggregateModelsProjects || 0),
+        write_snapshot: writeSnapshotMs,
+        total: Date.now() - totalStarted,
+      },
     };
   } finally {
     await lock.release();
@@ -169,6 +204,7 @@ export async function collectDenglemaSnapshot(options = {}, dependencies = {}) {
 }
 
 export async function uploadLatestDenglemaSnapshot(options = {}, dependencies = {}) {
+  const totalStarted = Date.now();
   const readConfigFn = dependencies.readConfig || readConfig;
   const fetchFn = dependencies.fetch || fetch;
   const now = dependencies.now?.() || new Date();
@@ -182,6 +218,7 @@ export async function uploadLatestDenglemaSnapshot(options = {}, dependencies = 
   const latest = await readLatestDenglemaSnapshot(options, dependencies);
   const sample = uploadSample(latest);
 
+  const uploadStarted = Date.now();
   const response = await fetchFn(`${server}/api/usage/sample`, {
     method: "POST",
     headers: {
@@ -195,6 +232,7 @@ export async function uploadLatestDenglemaSnapshot(options = {}, dependencies = 
   }
 
   const payload = await response.json();
+  const uploadHttpMs = Date.now() - uploadStarted;
   await writeDenglemaUploadState({
     date: sample.date,
     total_tokens: sample.total_tokens,
@@ -208,10 +246,15 @@ export async function uploadLatestDenglemaSnapshot(options = {}, dependencies = 
     sample,
     upload_status: "uploaded",
     ...payload,
+    timings_ms: {
+      upload_http: uploadHttpMs,
+      total: Date.now() - totalStarted,
+    },
   };
 }
 
 export async function syncDenglemaUsage(options = {}, dependencies = {}) {
+  const totalStarted = Date.now();
   const collected = await collectDenglemaSnapshot({
     ...options,
     force: true,
@@ -227,10 +270,22 @@ export async function syncDenglemaUsage(options = {}, dependencies = {}) {
       dry_run: true,
       installation_id: null,
       sample: uploadSample(collected.snapshot),
+      timings_ms: {
+        ...(collected.timings_ms || {}),
+        total: Date.now() - totalStarted,
+      },
     };
   }
 
-  return uploadLatestDenglemaSnapshot(options, dependencies);
+  const uploaded = await uploadLatestDenglemaSnapshot(options, dependencies);
+  return {
+    ...uploaded,
+    timings_ms: {
+      ...(collected.timings_ms || {}),
+      upload_http: Number(uploaded.timings_ms?.upload_http || 0),
+      total: Date.now() - totalStarted,
+    },
+  };
 }
 
 export async function runDenglemaCli(options = {}, dependencies = {}) {
@@ -243,7 +298,7 @@ export async function runDenglemaCli(options = {}, dependencies = {}) {
     } else if (status.bound) {
       console.log(`Denglema bound: ${status.installation_id || "installation"} → ${status.server}`);
     } else {
-      console.log("Denglema not bound. Open Denglema in Feishu and create a pairing code.");
+      console.log("Denglema not bound. Open the Denglema web page and create a pairing code.");
     }
     return 0;
   }

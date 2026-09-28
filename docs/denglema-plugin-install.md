@@ -21,7 +21,7 @@ codex plugin add denglema@denglema
 codex plugin list
 ```
 
-安装完成后重新启动 Codex。首次启动时，如果当前 native Codex environment 尚未绑定，Plugin 会自动打开统一入口的绑定模式，并尝试从页面唤起飞书「蹬了吗」。该提示只自动展示一次。Plugin 同时会在 Codex 使用期间自动维护一份本地 latest snapshot；最多每小时刷新一次，不会自动上传。
+安装完成后重新启动 Codex。首次启动时，如果当前 native Codex environment 尚未绑定，Plugin 会自动打开统一入口的绑定模式，并打开蹬了吗网页完成绑定。该提示只自动展示一次。Plugin 同时会在 Codex 使用期间自动维护一份本地 latest snapshot；最多每小时刷新一次，不会自动上传。
 
 ## 绑定当前 Codex 环境
 
@@ -58,7 +58,7 @@ Windows Plugin 不扫描 WSL 的 Codex Home；WSL Plugin 也不扫描 Windows。
 - 不会自动上传；
 - 用户明确说 `上传蹬了吗` 时，上传当前 latest snapshot，不重新扫描日志。
 
-上传字段只有 leaderboard date、observation timestamp 和 cumulative token total。不会上传 prompt、代码、项目名、模型 breakdown 或完整对话。
+上传字段包括 leaderboard date、observation timestamp、cumulative token total，以及按 model 和 workspace basename 聚合的 token breakdown。不会上传 prompt、代码、完整项目路径、thread 名或完整对话。
 
 ## 开发分支验证
 

@@ -29,10 +29,12 @@ test("usage sample contains only cumulative daily total", () => {
     new Date("2026-09-24T08:00:00Z"),
   );
   assert.deepEqual(sample, {
-    schema_version: 1,
+    schema_version: 2,
     observed_at: "2026-09-24T08:00:00.000Z",
     date: "2026-09-24",
     total_tokens: 12345,
+    models: [],
+    projects: [],
   });
 });
 
@@ -165,10 +167,12 @@ test("upload latest sends the stored snapshot without rescanning", async () => w
   assert.equal(request.url, "https://deng.example/api/usage/sample");
   assert.equal(request.init.headers.authorization, "Bearer secret");
   assert.deepEqual(JSON.parse(request.init.body), {
-    schema_version: 1,
+    schema_version: 2,
     observed_at: "2026-09-27T08:00:00.000Z",
     date: "2026-09-27",
     total_tokens: 4321,
+    models: [],
+    projects: [],
   });
   assert.equal(result.upload_status, "uploaded");
 
@@ -202,10 +206,12 @@ test("sync compatibility refreshes then uploads one cumulative sample", async ()
 
   assert.equal(request.url, "https://deng.example/api/usage/sample");
   assert.deepEqual(JSON.parse(request.init.body), {
-    schema_version: 1,
+    schema_version: 2,
     observed_at: "2026-09-24T09:00:00.000Z",
     date: "2026-09-24",
     total_tokens: 9001,
+    models: [],
+    projects: [],
   });
   assert.equal(result.sample.total_tokens, 9001);
 }));
