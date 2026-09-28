@@ -60,6 +60,19 @@ Windows Plugin 不扫描 WSL 的 Codex Home；WSL Plugin 也不扫描 Windows。
 
 上传字段包括 leaderboard date、observation timestamp、cumulative token total，以及按 model 和 workspace basename 聚合的 token breakdown。不会上传 prompt、代码、完整项目路径、thread 名或完整对话。
 
+## Plugin 更新
+
+蹬了吗会在 `denglema_status` 中检查 GitHub `main` 上的最新 Plugin manifest，并返回当前版本、最新版本和 `update_available`。
+
+Codex CLI 当前没有独立的 `plugin update` 子命令。检测到新版后按顺序执行：
+
+```bash
+codex plugin marketplace upgrade denglema
+codex plugin add denglema@denglema
+```
+
+第一步刷新 Git marketplace，第二步按新 manifest 重新安装蹬了吗。版本检查失败时不会阻塞绑定、快照或上传。
+
 ## 开发分支验证
 
 尚未合并到 `main` 时，可显式指定 Git ref：
