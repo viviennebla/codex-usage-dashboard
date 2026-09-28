@@ -60,6 +60,21 @@ Windows Plugin 不扫描 WSL 的 Codex Home；WSL Plugin 也不扫描 Windows。
 
 上传字段包括 leaderboard date、observation timestamp、cumulative token total，以及按 model 和 workspace basename 聚合的 token breakdown。不会上传 prompt、代码、完整项目路径、thread 名或完整对话。
 
+## Plugin 包结构
+
+蹬了吗使用 portable Agent Plugins 布局，唯一入口是根目录 `plugin.json`：
+
+```text
+codex-usage-dashboard/
+├─ plugin.json
+├─ mcp.json
+└─ skills/
+   └─ denglema-sync/
+      └─ SKILL.md
+```
+
+不要再添加 `.codex-plugin/plugin.json` 或 `.mcp.json`。它们属于兼容旧布局的 fallback；同时保留两套 manifest 会让技能和 MCP 路径出现重复解释空间。
+
 ## Plugin 更新
 
 蹬了吗会在 `denglema_status` 中检查 GitHub `main` 上的最新 Plugin manifest，并返回当前版本、最新版本和 `update_available`。
