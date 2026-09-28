@@ -16,7 +16,7 @@ import {
 } from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "https://vimo-dev-server.taila62aff.ts.net";
-const SERVER_INFO = { name: "denglema", version: "0.1.13" };
+const SERVER_INFO = { name: "denglema", version: "0.1.14" };
 const LATEST_PLUGIN_MANIFEST =
   "https://raw.githubusercontent.com/viviennebla/codex-usage-dashboard/main/plugin.json";
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
@@ -262,17 +262,15 @@ async function callDenglemaTool(name, args = {}, dependencies = {}) {
       name: typeof args.name === "string" && args.name.trim() ? args.name.trim() : undefined,
     }, dependencies);
 
-    let initialUpload = { status: "skipped", reason: "no_snapshot" };
+    let initialUpload;
     try {
-      const current = await latest({}, dependencies);
-      if (current?.exists && current?.snapshot) {
-        const uploaded = await upload({}, dependencies);
-        initialUpload = {
-          status: "uploaded",
-          date: uploaded?.sample?.date || current.snapshot.date || null,
-          total_tokens: uploaded?.sample?.total_tokens ?? current.snapshot.total_tokens ?? null,
-        };
-      }
+      const uploaded = await sync({ dryRun: false }, dependencies);
+      initialUpload = {
+        status: "uploaded",
+        date: uploaded?.sample?.date || null,
+        total_tokens: uploaded?.sample?.total_tokens ?? null,
+        schema_version: uploaded?.sample?.schema_version || null,
+      };
     } catch (error) {
       initialUpload = {
         status: "failed",

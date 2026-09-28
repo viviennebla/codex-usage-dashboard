@@ -21,15 +21,13 @@ codex plugin marketplace add viviennebla/codex-usage-dashboard
 codex plugin add denglema@denglema
 ```
 
-安装后首次启动 Plugin，如果当前环境尚未绑定，会自动打开统一入口的绑定模式；也可以直接在蹬了吗网页中点击 **绑定新设备**，为当前 Codex 环境生成一个 5 分钟有效、一次性的 pairing code，然后对 Codex 说：
+第一次接入时，在蹬了吗网页点击 **接入这台 Codex**，复制页面生成的一键命令到 Codex 所在终端执行。命令会自动安装/更新 Plugin、绑定当前骑手、重新采集当前环境并上传第一份快照。
 
-```text
-绑定蹬了吗 <pairing-code>
-```
+用户不需要理解或手工处理 pairing code；它只作为一键接入命令里的短期凭据存在。
 
-每个 Windows / WSL / macOS native Codex environment 都需要各自绑定一次；如果 pairing code 都由同一个飞书账号生成，这些 installation 会聚合到排行榜中的同一个用户。
+每个 Windows / WSL / macOS native Codex environment 都需要各自接入一次；同一个网页骑手身份下的 installation 会自动聚合。
 
-Plugin 在 Codex 使用期间最多每小时生成一份本地 token snapshot。首次绑定成功时会自动上传当前 latest snapshot 一次；之后不会自动上传，想刷新时说 `上传蹬了吗`。详细说明见 `docs/denglema-plugin-install.md`。
+首次接入会自动上传一次。之后 Plugin 只在本地最多每小时刷新 latest snapshot，不会自动上传；想刷新赛道时只需要说 `上传蹬了吗`。详细说明见 `docs/denglema-plugin-install.md`。
 
 ## MVP Release
 

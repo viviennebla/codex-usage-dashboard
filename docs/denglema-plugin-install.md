@@ -26,22 +26,22 @@ codex plugin list
 ## 绑定当前 Codex 环境
 
 1. 打开蹬了吗网页。
-2. 点击「绑定新设备」，生成一次性 pairing code。
-3. 在当前 Codex 中说：`绑定蹬了吗 <pairing-code>`。
-4. Plugin 使用 pairing code 为当前 native Codex environment 创建独立 installation。
-5. 首次绑定成功后会自动上传当前已有的 latest snapshot 一次，不重新扫描日志；后续手动上传时说：`上传蹬了吗`。
+2. 点击「接入这台 Codex」。
+3. 复制页面生成的一键命令到 Codex 所在终端执行。
+4. 命令自动完成 Marketplace 安装/更新、Plugin 安装、当前骑手绑定、fresh snapshot 采集和第一次上传。
+5. 后续只需要在 Codex 中说：`上传蹬了吗`。
 
-Pairing code 默认 5 分钟过期，并且成功使用一次后立即失效。
+一键命令内部仍使用 5 分钟有效的一次性凭据，但用户不需要查看、复制或理解它。
 
 ## 多设备 / 多环境
 
-每个 native Codex environment 都是一个独立 installation，因此需要各自生成一个新的 pairing code：
+每个 native Codex environment 都是一个独立 installation，因此需要各自执行一次「接入这台 Codex」：
 
 ```text
 同一个蹬了吗网页身份
-  ├─ Windows Codex  → pairing code A → installation A
-  ├─ WSL Codex      → pairing code B → installation B
-  └─ macOS Codex    → pairing code C → installation C
+  ├─ Windows Codex  → 一键接入 → installation A
+  ├─ WSL Codex      → 一键接入 → installation B
+  └─ macOS Codex    → 一键接入 → installation C
 ```
 
 这些 installation 都绑定到同一个蹬了吗网页身份对应的 internal user ID，服务端按用户聚合 usage，所以排行榜仍然只显示一个人。

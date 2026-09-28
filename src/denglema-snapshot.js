@@ -18,8 +18,7 @@ function envOf(dependencies = {}) {
 export function resolveDenglemaDataDir(options = {}, dependencies = {}) {
   const env = envOf(dependencies);
   return options.dataDir
-    || env.PLUGIN_DATA
-    || env.CLAUDE_PLUGIN_DATA
+    || env.DENGLEMA_DATA_DIR
     || join(homedir(), ".codex-usage", "denglema");
 }
 
