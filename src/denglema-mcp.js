@@ -242,6 +242,7 @@ async function callDenglemaTool(name, args = {}, dependencies = {}) {
       local_snapshot: {
         exists: Boolean(current?.exists && snapshot),
         schema_version: snapshotVersion,
+        harness: snapshot?.harness || "codex",
         upload_status: current?.upload_status || "missing",
         total_tokens: snapshot?.total_tokens ?? null,
         has_model_breakdown: Array.isArray(snapshot?.models) && snapshot.models.length > 0,
