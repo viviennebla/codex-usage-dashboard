@@ -1,8 +1,8 @@
 # Codex Usage Dashboard
 
-> **仓库定位：本地 Dashboard +「蹬了吗」Codex Plugin / Client。**
+> **仓库定位：本地 Dashboard +「蹬了吗」Codex Adapter / Portable Skill。**
 >
-> 本仓库负责读取本机 Codex / Claude Code 日志、生成本地 usage snapshot，以及「蹬了吗」Plugin 的安装、绑定、采集和上传。
+> 本仓库提供 Codex 的默认 Plugin/MCP adapter，同时维护 harness-agnostic 的 Denglema Skill。服务端 Usage Contract 同样支持 Cursor、Claude Code 和其他能提供可信累计 usage 的 Agent Harness。
 >
 > **公开的「蹬了吗」网站、赛道、燃烧榜、用户身份、服务端 API 和部署不在这里**，它们位于：
 > [viviennebla/codex-sync-server](https://github.com/viviennebla/codex-sync-server)
@@ -19,9 +19,9 @@
         ▼
 codex-usage-dashboard          ← 本仓库
 ├─ 本地 Dashboard
-├─ Denglema Plugin / MCP / Skill
-├─ schema v2 snapshot
-└─ 安装 / 绑定 / 上传
+├─ Codex Plugin / MCP adapter
+├─ Portable Denglema Skill
+└─ schema v2 adapter implementation
         │
         ▼
 codex-sync-server
@@ -33,10 +33,10 @@ codex-sync-server
 
 简单判断：
 
-- 想改 **本地日志解析、Plugin、snapshot、上传逻辑** → 改本仓库。
-- 想改 **蹬了吗网页、赛道、榜单、用户系统、服务端 API** → 改 `codex-sync-server`。
+- 想改 **Codex 日志解析、Codex Plugin/MCP、portable Skill、snapshot** → 改本仓库。
+- 想改 **Denglema Usage Contract、蹬了吗网页、赛道、榜单、用户系统、服务端 API** → 改 `codex-sync-server`。
 
-> 仓库名 `codex-usage-dashboard` 是历史名称；目前它仍保留完整本地 Dashboard，同时也是「蹬了吗」的 Plugin / Client 仓库。
+> 仓库名 `codex-usage-dashboard` 是历史名称；目前它仍保留完整本地 Dashboard，同时承担 Codex adapter。蹬了吗协议本身不绑定 Codex。
 
 ![Dashboard Screenshot](public/screenshot.png)
 
