@@ -132,14 +132,14 @@ test("MCP tool list exposes status, bind, latest, upload, and sync compatibility
 
 
 test("plugin version comparison and unavailable checks are safe", async () => {
-  assert.equal(compareDenglemaVersions("0.1.15", "0.1.14"), 1);
-  assert.equal(compareDenglemaVersions("0.1.14", "0.1.14"), 0);
-  assert.equal(compareDenglemaVersions("0.1.13", "0.1.14"), -1);
+  assert.equal(compareDenglemaVersions("0.1.16", "0.1.15"), 1);
+  assert.equal(compareDenglemaVersions("0.1.15", "0.1.15"), 0);
+  assert.equal(compareDenglemaVersions("0.1.14", "0.1.15"), -1);
 
   const result = await checkDenglemaPluginUpdate({
     fetch: async () => { throw new Error("offline"); },
   });
-  assert.equal(result.current_version, "0.1.14");
+  assert.equal(result.current_version, "0.1.15");
   assert.equal(result.latest_version, null);
   assert.equal(result.update_available, false);
   assert.equal(result.update_check, "unavailable");
@@ -160,7 +160,7 @@ test("MCP status never returns a token", async () => {
     }),
     fetch: async () => ({
       ok: true,
-      json: async () => ({ version: "0.1.15" }),
+      json: async () => ({ version: "0.1.16" }),
     }),
     getLatestDenglemaSnapshot: async () => ({
       exists: true,
@@ -176,8 +176,8 @@ test("MCP status never returns a token", async () => {
   });
   const value = JSON.parse(response.result.content[0].text);
   assert.equal(value.installation_id, "inst_1");
-  assert.equal(value.plugin.current_version, "0.1.14");
-  assert.equal(value.plugin.latest_version, "0.1.15");
+  assert.equal(value.plugin.current_version, "0.1.15");
+  assert.equal(value.plugin.latest_version, "0.1.16");
   assert.equal(value.plugin.update_available, true);
   assert.equal(value.local_snapshot.schema_version, 2);
   assert.equal(value.local_snapshot.upload_status, "pending");
