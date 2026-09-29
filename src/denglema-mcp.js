@@ -16,7 +16,7 @@ import {
 } from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "https://vimo-dev-server.taila62aff.ts.net";
-const SERVER_INFO = { name: "denglema", version: "0.1.14" };
+const SERVER_INFO = { name: "denglema", version: "0.1.15" };
 const LATEST_PLUGIN_MANIFEST =
   "https://raw.githubusercontent.com/viviennebla/codex-usage-dashboard/main/plugin.json";
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
@@ -326,7 +326,7 @@ export async function handleDenglemaMcpRequest(request, dependencies = {}) {
         protocolVersion: request.params?.protocolVersion || "2025-06-18",
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
-        instructions: "Denglema keeps one latest local snapshot. The local MCP process refreshes it at most hourly while Codex is in use; uploads happen only when the user chooses.",
+        instructions: "This MCP server is the Codex adapter for harness-agnostic Denglema. It keeps one latest local Codex snapshot; uploads happen only when the user chooses, except the first bind upload.",
       },
     };
   }
