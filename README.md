@@ -1,6 +1,42 @@
 # Codex Usage Dashboard
 
+> **仓库定位：本地 Dashboard +「蹬了吗」Codex Plugin / Client。**
+>
+> 本仓库负责读取本机 Codex / Claude Code 日志、生成本地 usage snapshot，以及「蹬了吗」Plugin 的安装、绑定、采集和上传。
+>
+> **公开的「蹬了吗」网站、赛道、燃烧榜、用户身份、服务端 API 和部署不在这里**，它们位于：
+> [viviennebla/codex-sync-server](https://github.com/viviennebla/codex-sync-server)
+
 本地 Codex + Claude Code 使用量仪表盘。它会直接读取本机的 JSONL 日志，汇总 token、请求次数、模型、项目、会话、费用估算、速率限制和 Skills/MCP 使用情况，并提供一个零依赖的 Web 页面查看结果。
+
+公开「蹬了吗」入口：<https://vimo-dev-server.taila62aff.ts.net/>
+
+### 两个仓库怎么配合
+
+```text
+本机 Codex / Claude Code 日志
+        │
+        ▼
+codex-usage-dashboard          ← 本仓库
+├─ 本地 Dashboard
+├─ Denglema Plugin / MCP / Skill
+├─ schema v2 snapshot
+└─ 安装 / 绑定 / 上传
+        │
+        ▼
+codex-sync-server
+├─ 蹬了吗网站
+├─ 用户 / installation / usage 存储
+├─ 赛道 / 燃烧榜 / 我的主页
+└─ Codex reset 刘海 / 服务端 API
+```
+
+简单判断：
+
+- 想改 **本地日志解析、Plugin、snapshot、上传逻辑** → 改本仓库。
+- 想改 **蹬了吗网页、赛道、榜单、用户系统、服务端 API** → 改 `codex-sync-server`。
+
+> 仓库名 `codex-usage-dashboard` 是历史名称；目前它仍保留完整本地 Dashboard，同时也是「蹬了吗」的 Plugin / Client 仓库。
 
 ![Dashboard Screenshot](public/screenshot.png)
 
