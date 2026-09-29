@@ -41,10 +41,11 @@ function normalizeDimensionRows(rows = []) {
     .sort((a, b) => b.total_tokens - a.total_tokens || a.name.localeCompare(b.name));
 }
 
-export function buildDenglemaUsageSample(dailyUsage, observedAt = new Date()) {
+export function buildDenglemaUsageSample(dailyUsage, observedAt = new Date(), harness = "codex") {
   if (!dailyUsage?.date) throw new Error("No usage data is available for today");
   return {
     schema_version: 2,
+    harness,
     observed_at: observedAt.toISOString(),
     date: dailyUsage.date,
     total_tokens: nonNegativeInteger(dailyUsage.totalTokens),
@@ -64,6 +65,9 @@ function uploadSample(snapshot) {
     date: snapshot.date,
     total_tokens: nonNegativeInteger(snapshot.total_tokens),
     ...(version === 2 ? {
+      harness: typeof snapshot.harness === "string" && snapshot.harness.trim()
+        ? snapshot.harness.trim().toLowerCase()
+        : "codex",
       models: normalizeDimensionRows(snapshot.models),
       projects: normalizeDimensionRows(snapshot.projects),
     } : {}),
