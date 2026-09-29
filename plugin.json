@@ -1,15 +1,18 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "denglema",
-  "version": "0.1.14",
-  "description": "Keep hourly local Codex usage snapshots for Denglema, with browser identity, device pairing, and a public race page.",
+  "version": "0.1.15",
+  "description": "Denglema Agent usage adapter: Codex local snapshots plus a harness-agnostic Skill and schema v2 upload contract.",
   "author": {
     "name": "viviennebla"
   },
   "repository": "https://github.com/viviennebla/codex-usage-dashboard",
   "license": "MIT",
   "keywords": [
+    "agent",
     "codex",
+    "cursor",
+    "claude-code",
     "usage",
     "leaderboard",
     "vibe-coding"
@@ -18,8 +21,8 @@
     "com.openai": {
       "interface": {
         "displayName": "蹬了吗",
-        "shortDescription": "把今天的 Codex token 蹬进公司赛道",
-        "longDescription": "在本地最多每小时生成一份 Codex token 快照；首次绑定会上传当前 latest snapshot，之后由用户选择何时上传。蹬了吗网页使用昵称 + 恢复码身份，不依赖飞书或其他第三方登录。不会上传 prompt、代码、完整路径或对话内容；schema v2 仅额外上传模型名与 workspace basename 的 token 汇总。",
+        "shortDescription": "把 Agent usage 蹬进同一个赛道",
+        "longDescription": "Codex 使用本地 MCP adapter 维护 snapshot；Denglema Skill 与 schema v2 协议同时支持 Cursor、Claude Code 和其他可提供可信累计 usage 的 Agent Harness。不会上传 prompt、代码、完整路径或对话内容。",
         "developerName": "viviennebla",
         "category": "Productivity",
         "brandColor": "#E76543",
