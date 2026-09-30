@@ -25,6 +25,9 @@ function dimensionRows(values) {
 
 export function summarizeCodexDay(events = [], date, timezone) {
   let totalTokens = 0;
+  let latestRateLimits = null;
+  let latestRateLimitsAt = -Infinity;
+  let latestRateLimitsUpdatedAt = null;
   const models = new Map();
   const projects = new Map();
 
@@ -32,6 +35,15 @@ export function summarizeCodexDay(events = [], date, timezone) {
     if (!event?.timestamp) continue;
     if (event.source === "claude") continue;
     if (dayKey(event.timestamp, timezone) !== date) continue;
+
+    if (event.rateLimits?.primary || event.rateLimits?.secondary) {
+      const eventTime = Date.parse(event.timestamp);
+      if (Number.isFinite(eventTime) && eventTime >= latestRateLimitsAt) {
+        latestRateLimits = event.rateLimits;
+        latestRateLimitsAt = eventTime;
+        latestRateLimitsUpdatedAt = new Date(eventTime).toISOString();
+      }
+    }
 
     const tokens = number(event.totalTokens);
     totalTokens += tokens;
@@ -58,6 +70,10 @@ export function summarizeCodexDay(events = [], date, timezone) {
     totalTokens: Math.round(totalTokens),
     models: dimensionRows(models),
     projects: dimensionRows(projects),
+    ...(latestRateLimits ? {
+      rateLimits: latestRateLimits,
+      rateLimitsUpdatedAt: latestRateLimitsUpdatedAt,
+    } : {}),
   };
 }
 
