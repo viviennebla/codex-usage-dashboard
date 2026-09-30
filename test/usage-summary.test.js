@@ -47,6 +47,73 @@ test("summarizeCodexDay aggregates total, models, and workspace project basename
   });
 });
 
+test("summarizeCodexDay keeps the latest native rate-limit event", () => {
+  const result = summarizeCodexDay([
+    {
+      timestamp: "2026-09-30T08:00:00Z",
+      source: "sessions",
+      totalTokens: 10,
+      model: "gpt-5.6-sol",
+      rateLimits: {
+        primary: {
+          used_percent: 40,
+          window_minutes: 300,
+          resets_at: "2026-09-30T10:00:00Z",
+        },
+        secondary: null,
+      },
+    },
+    {
+      timestamp: "2026-09-30T09:32:42.953Z",
+      source: "sessions",
+      totalTokens: 20,
+      model: "gpt-5.6-sol",
+      rateLimits: {
+        primary: {
+          used_percent: 80,
+          window_minutes: 10080,
+          resets_at: "2026-10-04T05:04:22.000Z",
+        },
+        secondary: null,
+      },
+    },
+    {
+      timestamp: "2026-09-30T09:40:00Z",
+      source: "claude",
+      totalTokens: 999,
+      rateLimits: {
+        primary: {
+          used_percent: 99,
+          window_minutes: 5,
+          resets_at: "2026-09-30T09:45:00Z",
+        },
+      },
+    },
+    {
+      timestamp: "2026-09-29T23:59:59Z",
+      source: "sessions",
+      totalTokens: 5,
+      rateLimits: {
+        primary: {
+          used_percent: 95,
+          window_minutes: 300,
+          resets_at: "2026-09-30T01:00:00Z",
+        },
+      },
+    },
+  ], "2026-09-30", "UTC");
+
+  assert.deepEqual(result.rateLimits, {
+    primary: {
+      used_percent: 80,
+      window_minutes: 10080,
+      resets_at: "2026-10-04T05:04:22.000Z",
+    },
+    secondary: null,
+  });
+  assert.equal(result.rateLimitsUpdatedAt, "2026-09-30T09:32:42.953Z");
+});
+
 test("collectCodexDailyUsage scans one native Codex environment and exposes stage timings", async () => {
   let received;
   let resolved;
