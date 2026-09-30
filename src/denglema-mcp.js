@@ -21,7 +21,7 @@ import {
 } from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "https://vimo-dev-server.taila62aff.ts.net";
-const SERVER_INFO = { name: "denglema", version: "0.1.17" };
+const SERVER_INFO = { name: "denglema", version: "0.1.18" };
 const LATEST_PLUGIN_MANIFEST =
   "https://raw.githubusercontent.com/viviennebla/codex-usage-dashboard/main/plugin.json";
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;

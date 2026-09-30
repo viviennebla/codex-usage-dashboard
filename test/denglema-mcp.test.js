@@ -141,7 +141,7 @@ test("plugin version comparison and unavailable checks are safe", async () => {
   const result = await checkDenglemaPluginUpdate({
     fetch: async () => { throw new Error("offline"); },
   });
-  assert.equal(result.current_version, "0.1.17");
+  assert.equal(result.current_version, "0.1.18");
   assert.equal(result.latest_version, null);
   assert.equal(result.update_available, false);
   assert.equal(result.update_check, "unavailable");
@@ -180,7 +180,7 @@ test("MCP status never returns a token", async () => {
   const value = JSON.parse(response.result.content[0].text);
   assert.equal(value.installation_id, "inst_1");
   assert.deepEqual(value.auto_upload, { enabled: true, interval: "3h" });
-  assert.equal(value.plugin.current_version, "0.1.17");
+  assert.equal(value.plugin.current_version, "0.1.18");
   assert.equal(value.plugin.latest_version, "0.1.16");
   assert.equal(value.plugin.update_available, false);
   assert.equal(value.local_snapshot.schema_version, 2);

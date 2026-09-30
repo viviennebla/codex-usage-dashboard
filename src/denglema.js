@@ -272,7 +272,24 @@ export async function collectDenglemaSnapshot(options = {}, dependencies = {}) {
         .then(() => readLimits(options))
         .catch(() => null),
     ]);
-    const sample = buildDenglemaUsageSample(dailyUsage, now, "codex", limitStatus);
+
+    const hasLiveLimits = Boolean(
+      limitStatus?.limits?.primary || limitStatus?.limits?.secondary,
+    );
+    const fallbackLimitStatus = dailyUsage.rateLimits
+      ? {
+          limits: dailyUsage.rateLimits,
+          limit_updated_at: dailyUsage.rateLimitsUpdatedAt || now.toISOString(),
+          source: "codex_jsonl",
+        }
+      : null;
+
+    const sample = buildDenglemaUsageSample(
+      dailyUsage,
+      now,
+      "codex",
+      hasLiveLimits ? limitStatus : fallbackLimitStatus,
+    );
     const snapshot = {
       ...sample,
       timezone: timezone || null,
