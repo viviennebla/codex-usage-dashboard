@@ -34,11 +34,21 @@ codex plugin add denglema@denglema
 → 第一次上传
 ```
 
-之后只需要对 Codex 说：
+首次接入完成后，Codex 会询问是否允许自动更新。只有用户明确选择后才会启用，可选：
 
 ```text
+关闭 / 每 1 小时 / 每 3 小时（推荐） / 每 6 小时 / 每天
+```
+
+也可以随时对 Codex 说：
+
+```text
+每 3 小时自动上传蹬了吗
+关闭蹬了吗自动上传
 上传蹬了吗
 ```
+
+自动上传只在 Codex Plugin/MCP 运行期间生效；手动上传始终保留。
 
 ### Cursor / Claude Code / 其他 Agent
 
@@ -124,7 +134,13 @@ Agent Prompt 已经包含一次性 pairing code 和 Usage Contract。当前 Agen
 - 上传到同一个 Denglema server；
 - 不上传 prompt、代码、完整路径、thread/chat 名、tool 内容或 transcript。
 
-Codex Plugin 会在使用期间最多每小时维护一份本地 latest snapshot。普通 `上传蹬了吗` 不重新扫描 Codex JSONL。
+Codex Plugin 会在使用期间最多每小时维护一份本地 latest snapshot。自动上传默认关闭，用户可明确授权 `1h / 3h / 6h / 1d` 周期；到期时只上传 pending snapshot。普通 `上传蹬了吗` 不重新扫描 Codex JSONL。
+
+通知策略：
+
+- 自动上传已开启：不弹普通 pending snapshot 提醒；
+- 自动上传关闭：每天最多提醒一次；
+- 自动上传失败：发送失败提醒，本地 snapshot 保留并稍后重试。
 
 ## Plugin 包结构
 
