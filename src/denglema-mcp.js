@@ -239,6 +239,11 @@ export function startDenglemaSnapshotScheduler(dependencies = {}) {
 
       const result = await collect({}, dependencies);
       const now = dependencies.now?.() || new Date();
+      delay = nextDenglemaSnapshotDelay(
+        result?.snapshot,
+        now,
+        DENGLEMA_SNAPSHOT_INTERVAL_MS,
+      );
 
       if (isDenglemaAutoUploadDue(bindingStatus, result, now)) {
         try {
@@ -253,14 +258,6 @@ export function startDenglemaSnapshotScheduler(dependencies = {}) {
         try {
           await notify(result, {}, dependencies);
         } catch {}
-      }
-
-      if (delay !== ERROR_RETRY_MS) {
-        delay = nextDenglemaSnapshotDelay(
-          result?.snapshot,
-          now,
-          DENGLEMA_SNAPSHOT_INTERVAL_MS,
-        );
       }
     } catch {
       delay = ERROR_RETRY_MS;
