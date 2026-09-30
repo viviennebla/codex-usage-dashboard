@@ -63,7 +63,7 @@ codex plugin add denglema@denglema
 
 每个 Windows / WSL / macOS native Codex environment 都需要各自接入一次；同一个网页骑手身份下的 installation 会自动聚合。
 
-首次接入会自动上传一次。之后 Plugin 只在本地最多每小时刷新 latest snapshot，不会自动上传；想刷新赛道时只需要说 `上传蹬了吗`。详细说明见 `docs/denglema-plugin-install.md`。
+首次接入会自动上传一次。之后 Plugin 默认仍只在本地最多每小时刷新 latest snapshot；用户可明确授权 `1h / 3h / 6h / 1d` 自动上传周期，未授权时保持手动上传。自动上传开启后不再弹普通“快照已生成”提醒；关闭自动上传时每天最多提醒一次，自动上传失败才发送异常提醒。想手动刷新时仍可说 `上传蹬了吗`。详细说明见 `docs/denglema-plugin-install.md`。
 
 ## MVP Release
 
