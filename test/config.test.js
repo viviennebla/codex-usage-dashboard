@@ -64,6 +64,10 @@ test("Denglema installation config is stored separately from legacy sync", async
     installationId: "inst-1",
     token: "secret",
     timezone: "Asia/Shanghai",
+    autoUpload: {
+      enabled: false,
+      interval: null,
+    },
   });
   assert.deepEqual(config.sync, { server: null, token: null });
 });
