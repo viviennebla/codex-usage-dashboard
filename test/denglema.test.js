@@ -95,6 +95,79 @@ test("usage-limit snapshots record remaining quota without absolute account quot
   assert.equal(sample.usage_limits.primary.remaining_percent, 17.5);
 });
 
+test("collector falls back to the latest native rate-limit event when live status is unavailable", async () => withTempData(async (dataDir) => {
+  const result = await collectDenglemaSnapshot({ dataDir, force: true }, {
+    readConfig: async () => ({ denglema: { timezone: "UTC" } }),
+    collectCodexDailyUsage: async () => ({
+      date: "2026-09-30",
+      totalTokens: 1234,
+      models: [],
+      projects: [],
+      rateLimits: {
+        primary: {
+          used_percent: 80,
+          window_minutes: 10080,
+          resets_at: "2026-10-04T05:04:22.000Z",
+        },
+        secondary: null,
+      },
+      rateLimitsUpdatedAt: "2026-09-30T09:32:42.953Z",
+    }),
+    readCodexStatusRateLimits: async () => {
+      throw new Error("failed to initialize sqlite state runtime under /home/smore/.codex");
+    },
+    env: {},
+    now: () => new Date("2026-09-30T09:40:00Z"),
+  });
+
+  assert.equal(result.collected, true);
+  assert.deepEqual(result.snapshot.usage_limits, {
+    updated_at: "2026-09-30T09:32:42.953Z",
+    primary: {
+      used_percent: 80,
+      remaining_percent: 20,
+      window_minutes: 10080,
+      resets_at: "2026-10-04T05:04:22.000Z",
+    },
+    secondary: null,
+  });
+}));
+
+test("collector prefers live rate limits over JSONL fallback when live status is valid", async () => withTempData(async (dataDir) => {
+  const result = await collectDenglemaSnapshot({ dataDir, force: true }, {
+    readConfig: async () => ({ denglema: { timezone: "UTC" } }),
+    collectCodexDailyUsage: async () => ({
+      date: "2026-09-30",
+      totalTokens: 1234,
+      models: [],
+      projects: [],
+      rateLimits: {
+        primary: { used_percent: 80, window_minutes: 10080 },
+        secondary: null,
+      },
+      rateLimitsUpdatedAt: "2026-09-30T09:32:42.953Z",
+    }),
+    readCodexStatusRateLimits: async () => ({
+      limits: {
+        primary: {
+          used_percent: 25,
+          window_minutes: 300,
+          resets_at: "2026-09-30T12:00:00Z",
+        },
+        secondary: null,
+      },
+      limit_updated_at: "2026-09-30T09:39:00Z",
+      source: "codex_status_api",
+    }),
+    env: {},
+    now: () => new Date("2026-09-30T09:40:00Z"),
+  });
+
+  assert.equal(result.snapshot.usage_limits.primary.used_percent, 25);
+  assert.equal(result.snapshot.usage_limits.primary.remaining_percent, 75);
+  assert.equal(result.snapshot.usage_limits.updated_at, "2026-09-30T09:39:00.000Z");
+}));
+
 test("newer usage-limit observation stays pending even when tokens did not change", () => {
   const snapshot = {
     schema_version: 2,
