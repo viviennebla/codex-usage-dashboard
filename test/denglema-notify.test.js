@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   maybeNotifyDenglemaSnapshot,
+  maybeNotifyDenglemaUploadFailure,
   sendDenglemaNativeNotification,
 } from "../src/denglema-notify.js";
 import { readDenglemaNotificationState } from "../src/denglema-snapshot.js";
@@ -39,6 +40,7 @@ test("new pending snapshot notifies once and persists notification state", async
   const dependencies = {
     env: {},
     now: () => new Date("2026-09-27T12:01:00Z"),
+    readConfig: async () => ({ denglema: { autoUpload: { enabled: false, interval: null } } }),
     sendNativeNotification: async (title, message) => {
       calls += 1;
       notification = { title, message };
@@ -66,7 +68,7 @@ test("new pending snapshot notifies once and persists notification state", async
     dependencies,
   );
   assert.equal(second.notified, false);
-  assert.equal(second.reason, "already_notified");
+  assert.equal(second.reason, "daily_reminder_sent");
   assert.equal(calls, 1);
 }));
 
@@ -75,6 +77,7 @@ test("new observation with no token growth does not notify again", async () => w
   const dependencies = {
     env: {},
     now: () => new Date("2026-09-27T13:01:00Z"),
+    readConfig: async () => ({ denglema: { autoUpload: { enabled: false, interval: null } } }),
     sendNativeNotification: async () => {
       calls += 1;
       return true;
@@ -101,7 +104,7 @@ test("new observation with no token growth does not notify again", async () => w
   );
 
   assert.equal(result.notified, false);
-  assert.equal(result.reason, "no_growth");
+  assert.equal(result.reason, "daily_reminder_sent");
   assert.equal(calls, 1);
 }));
 
@@ -109,6 +112,7 @@ test("uploaded and empty snapshots do not notify", async () => withTempData(asyn
   let calls = 0;
   const dependencies = {
     env: {},
+    readConfig: async () => ({ denglema: { autoUpload: { enabled: false, interval: null } } }),
     sendNativeNotification: async () => {
       calls += 1;
       return true;
@@ -177,3 +181,68 @@ test("native notification dispatch uses platform-specific commands", () => {
   }), false);
   assert.equal(calls.length, 0);
 });
+
+
+test("auto upload suppresses pending snapshot reminders", async () => withTempData(async (dataDir) => {
+  let calls = 0;
+  const result = await maybeNotifyDenglemaSnapshot(
+    pendingSnapshot(777),
+    { dataDir },
+    {
+      env: {},
+      readConfig: async () => ({
+        denglema: { autoUpload: { enabled: true, interval: "3h" } },
+      }),
+      sendNativeNotification: async () => {
+        calls += 1;
+        return true;
+      },
+    },
+  );
+
+  assert.equal(result.notified, false);
+  assert.equal(result.reason, "auto_upload_enabled");
+  assert.equal(calls, 0);
+}));
+
+test("auto upload failure notification is throttled for one hour", async () => withTempData(async (dataDir) => {
+  let calls = 0;
+  let now = new Date("2026-09-27T12:00:00Z");
+  const dependencies = {
+    env: {},
+    now: () => now,
+    sendNativeNotification: async (title, message) => {
+      calls += 1;
+      assert.match(title, /自动上传失败/);
+      assert.match(message, /稍后会自动重试/);
+      return true;
+    },
+  };
+
+  const first = await maybeNotifyDenglemaUploadFailure(
+    new Error("network down"),
+    { dataDir },
+    dependencies,
+  );
+  assert.equal(first.notified, true);
+  assert.equal(calls, 1);
+
+  now = new Date("2026-09-27T12:30:00Z");
+  const second = await maybeNotifyDenglemaUploadFailure(
+    new Error("network down"),
+    { dataDir },
+    dependencies,
+  );
+  assert.equal(second.notified, false);
+  assert.equal(second.reason, "failure_throttled");
+  assert.equal(calls, 1);
+
+  now = new Date("2026-09-27T13:01:00Z");
+  const third = await maybeNotifyDenglemaUploadFailure(
+    new Error("still down"),
+    { dataDir },
+    dependencies,
+  );
+  assert.equal(third.notified, true);
+  assert.equal(calls, 2);
+}));
