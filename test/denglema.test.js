@@ -8,6 +8,7 @@ import {
   bindDenglema,
   buildDenglemaUsageSample,
   collectDenglemaSnapshot,
+  configureDenglemaAutoUpload,
   getDenglemaStatus,
   syncDenglemaUsage,
   uploadLatestDenglemaSnapshot,
@@ -89,8 +90,44 @@ test("status never exposes the installation token", async () => {
     installation_id: "inst_1",
     timezone: "Asia/Shanghai",
     has_token: true,
+    auto_upload: {
+      enabled: false,
+      interval: null,
+    },
   });
   assert.equal(JSON.stringify(status).includes("do-not-print"), false);
+});
+
+test("auto upload configuration requires an allowed explicit interval", async () => {
+  let saved;
+  const enabled = await configureDenglemaAutoUpload({
+    enabled: true,
+    interval: "3h",
+  }, {
+    updateDenglemaAutoUpload: async (value) => {
+      saved = value;
+      return value;
+    },
+  });
+  assert.deepEqual(saved, { enabled: true, interval: "3h" });
+  assert.deepEqual(enabled, { enabled: true, interval: "3h" });
+
+  const disabled = await configureDenglemaAutoUpload({
+    enabled: false,
+  }, {
+    updateDenglemaAutoUpload: async (value) => value,
+  });
+  assert.deepEqual(disabled, { enabled: false, interval: null });
+
+  await assert.rejects(
+    configureDenglemaAutoUpload({
+      enabled: true,
+      interval: "15m",
+    }, {
+      updateDenglemaAutoUpload: async (value) => value,
+    }),
+    /1h, 3h, 6h, 1d/,
+  );
 });
 
 test("bind stores opaque installation credentials returned by pairing", async () => {
