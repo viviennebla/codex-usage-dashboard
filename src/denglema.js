@@ -15,6 +15,7 @@ import {
   writeDenglemaUploadState,
   writeLatestDenglemaSnapshot,
 } from "./denglema-snapshot.js";
+import { readCodexStatusRateLimits } from "./status.js";
 import { collectCodexDailyUsage } from "./usage-summary.js";
 
 export const DENGLEMA_AUTO_UPLOAD_INTERVAL_MS = Object.freeze({
@@ -53,8 +54,57 @@ function normalizeDimensionRows(rows = []) {
     .sort((a, b) => b.total_tokens - a.total_tokens || a.name.localeCompare(b.name));
 }
 
-export function buildDenglemaUsageSample(dailyUsage, observedAt = new Date(), harness = "codex") {
+function percent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, Math.min(100, number));
+}
+
+function isoInstant(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return new Date(value * 1000).toISOString();
+  }
+  const parsed = Date.parse(value || "");
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
+function normalizeUsageLimitWindow(window) {
+  if (!window || typeof window !== "object") return null;
+  const used = percent(window.used_percent ?? window.usedPercent);
+  const suppliedRemaining = percent(window.remaining_percent ?? window.remainingPercent);
+  if (used === null && suppliedRemaining === null) return null;
+  const remaining = suppliedRemaining ?? (100 - used);
+  const normalizedUsed = used ?? (100 - remaining);
+  const windowMinutes = Number(window.window_minutes ?? window.windowDurationMins);
+  return {
+    used_percent: normalizedUsed,
+    remaining_percent: remaining,
+    window_minutes: Number.isFinite(windowMinutes) && windowMinutes >= 0 ? windowMinutes : null,
+    resets_at: isoInstant(window.resets_at ?? window.resetsAt ?? window.resets_at_epoch),
+  };
+}
+
+export function normalizeDenglemaUsageLimits(value, fallbackUpdatedAt = null) {
+  const limits = value?.limits || value;
+  if (!limits || typeof limits !== "object") return null;
+  const primary = normalizeUsageLimitWindow(limits.primary);
+  const secondary = normalizeUsageLimitWindow(limits.secondary);
+  if (!primary && !secondary) return null;
+  return {
+    updated_at: isoInstant(value?.limit_updated_at ?? value?.updated_at ?? fallbackUpdatedAt),
+    primary,
+    secondary,
+  };
+}
+
+export function buildDenglemaUsageSample(
+  dailyUsage,
+  observedAt = new Date(),
+  harness = "codex",
+  limitStatus = null,
+) {
   if (!dailyUsage?.date) throw new Error("No usage data is available for today");
+  const usageLimits = normalizeDenglemaUsageLimits(limitStatus, observedAt.toISOString());
   return {
     schema_version: 2,
     harness,
@@ -63,6 +113,7 @@ export function buildDenglemaUsageSample(dailyUsage, observedAt = new Date(), ha
     total_tokens: nonNegativeInteger(dailyUsage.totalTokens),
     models: normalizeDimensionRows(dailyUsage.models),
     projects: normalizeDimensionRows(dailyUsage.projects),
+    ...(usageLimits ? { usage_limits: usageLimits } : {}),
   };
 }
 
@@ -71,6 +122,9 @@ function uploadSample(snapshot) {
     throw new Error("No Denglema snapshot is available to upload");
   }
   const version = snapshot.schema_version === 2 ? 2 : 1;
+  const usageLimits = version === 2
+    ? normalizeDenglemaUsageLimits(snapshot.usage_limits, snapshot.observed_at)
+    : null;
   return {
     schema_version: version,
     observed_at: snapshot.observed_at,
@@ -82,6 +136,7 @@ function uploadSample(snapshot) {
         : "codex",
       models: normalizeDimensionRows(snapshot.models),
       projects: normalizeDimensionRows(snapshot.projects),
+      ...(usageLimits ? { usage_limits: usageLimits } : {}),
     } : {}),
   };
 }
@@ -163,6 +218,7 @@ export async function collectDenglemaSnapshot(options = {}, dependencies = {}) {
   const totalStarted = Date.now();
   const readConfigFn = dependencies.readConfig || readConfig;
   const collectUsage = dependencies.collectCodexDailyUsage || collectCodexDailyUsage;
+  const readLimits = dependencies.readCodexStatusRateLimits || readCodexStatusRateLimits;
   const now = dependencies.now?.() || new Date();
   const intervalMs = Number.isFinite(Number(options.intervalMs))
     ? Math.max(0, Number(options.intervalMs))
@@ -205,13 +261,18 @@ export async function collectDenglemaSnapshot(options = {}, dependencies = {}) {
       };
     }
 
-    const dailyUsage = await collectUsage({
-      ...options,
-      timezone,
-    }, {
-      now: () => now,
-    });
-    const sample = buildDenglemaUsageSample(dailyUsage, now);
+    const [dailyUsage, limitStatus] = await Promise.all([
+      collectUsage({
+        ...options,
+        timezone,
+      }, {
+        now: () => now,
+      }),
+      Promise.resolve()
+        .then(() => readLimits(options))
+        .catch(() => null),
+    ]);
+    const sample = buildDenglemaUsageSample(dailyUsage, now, "codex", limitStatus);
     const snapshot = {
       ...sample,
       timezone: timezone || null,
@@ -273,6 +334,7 @@ export async function uploadLatestDenglemaSnapshot(options = {}, dependencies = 
     schema_version: sample.schema_version,
     date: sample.date,
     total_tokens: sample.total_tokens,
+    usage_limits_updated_at: sample.usage_limits?.updated_at || null,
     uploaded_at: now.toISOString(),
     installation_id: connection.installationId || payload.installation_id || null,
   }, options, dependencies);
