@@ -77,6 +77,7 @@ function parseArgs(argv) {
     else if (arg === "--token") options.token = rest[++index];
     else if (arg === "--code") options.code = rest[++index];
     else if (arg === "--name") options.name = rest[++index];
+    else if (arg === "--interval") options.interval = rest[++index];
     else if (arg === "--names") options.names = rest[++index];
     else if (arg === "--strategy") options.strategy = rest[++index];
     else if (arg === "--yes" || arg === "-y") options.yes = true;
@@ -107,6 +108,7 @@ Usage:
   node src/cli.js denglema snapshot
   node src/cli.js denglema collect
   node src/cli.js denglema upload
+  node src/cli.js denglema auto-upload --interval <off|1h|3h|6h|1d>
   node src/cli.js denglema sync [--dry-run]
   node src/cli.js skills prompt [--path <dir>] [--names a,b|--all] [--json]
 
