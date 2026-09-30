@@ -101,10 +101,18 @@ export function snapshotUploadStatus(snapshot, uploadState) {
   if (!snapshot) return "missing";
   const snapshotVersion = snapshot.schema_version === 2 ? 2 : 1;
   const uploadedVersion = uploadState?.schema_version === 2 ? 2 : 1;
+  const snapshotLimitUpdatedAt = Date.parse(snapshot?.usage_limits?.updated_at || "");
+  const uploadedLimitUpdatedAt = Date.parse(uploadState?.usage_limits_updated_at || "");
+  const limitsUploaded = !Number.isFinite(snapshotLimitUpdatedAt)
+    || (
+      Number.isFinite(uploadedLimitUpdatedAt)
+      && uploadedLimitUpdatedAt >= snapshotLimitUpdatedAt
+    );
   if (
     uploadState?.date === snapshot.date
     && uploadedVersion >= snapshotVersion
     && Number(uploadState?.total_tokens) >= Number(snapshot.total_tokens)
+    && limitsUploaded
   ) {
     return "uploaded";
   }
