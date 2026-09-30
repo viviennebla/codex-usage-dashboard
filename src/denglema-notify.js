@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 
+import { readConfig } from "./config.js";
 import {
   readDenglemaNotificationState,
   writeDenglemaNotificationState,
@@ -121,20 +122,20 @@ export async function maybeNotifyDenglemaSnapshot(
     return { notified: false, reason: "empty" };
   }
 
-  const state = await readDenglemaNotificationState(options, dependencies);
-  if (state?.observed_at === snapshot.observed_at) {
-    return { notified: false, reason: "already_notified" };
-  }
-  if (
-    state?.date === snapshot.date
-    && Number(state?.total_tokens) >= Number(snapshot.total_tokens || 0)
-  ) {
-    return { notified: false, reason: "no_growth" };
+  const readConfigFn = dependencies.readConfig || readConfig;
+  const config = await readConfigFn(options.configPath);
+  if (config.denglema?.autoUpload?.enabled === true) {
+    return { notified: false, reason: "auto_upload_enabled" };
   }
 
-  const title = "蹬了吗 · 快照已生成";
+  const state = await readDenglemaNotificationState(options, dependencies);
+  if (state?.pending_reminder_date === snapshot.date) {
+    return { notified: false, reason: "daily_reminder_sent" };
+  }
+
+  const title = "蹬了吗 · 今天还没自动更新";
   const message =
-    `本地快照：${formatTokens(snapshot.total_tokens)} tokens。尚未上传；想上传时说“上传蹬了吗”，忽略即可继续留在本机。`;
+    `本地已有 ${formatTokens(snapshot.total_tokens)} tokens。可在 Codex 里开启自动更新，或说“上传蹬了吗”。`;
 
   const send = dependencies.sendNativeNotification || sendDenglemaNativeNotification;
   const delivered = await send(title, message, dependencies);
@@ -144,8 +145,10 @@ export async function maybeNotifyDenglemaSnapshot(
 
   const now = dependencies.now?.() || new Date();
   await writeDenglemaNotificationState({
+    ...(state || {}),
     observed_at: snapshot.observed_at,
     notified_at: now.toISOString(),
+    pending_reminder_date: snapshot.date,
     date: snapshot.date,
     total_tokens: Number(snapshot.total_tokens || 0),
   }, options, dependencies);
@@ -155,4 +158,34 @@ export async function maybeNotifyDenglemaSnapshot(
     observed_at: snapshot.observed_at,
     total_tokens: Number(snapshot.total_tokens || 0),
   };
+}
+
+
+export async function maybeNotifyDenglemaUploadFailure(
+  error,
+  options = {},
+  dependencies = {},
+) {
+  const state = await readDenglemaNotificationState(options, dependencies);
+  const now = dependencies.now?.() || new Date();
+  const previous = Date.parse(state?.upload_failure_notified_at || "");
+  if (Number.isFinite(previous) && now.getTime() - previous < 60 * 60 * 1000) {
+    return { notified: false, reason: "failure_throttled" };
+  }
+
+  const title = "蹬了吗 · 自动上传失败";
+  const message = "本地 usage 快照仍然保留，稍后会自动重试。";
+  const send = dependencies.sendNativeNotification || sendDenglemaNativeNotification;
+  const delivered = await send(title, message, dependencies);
+  if (!delivered) {
+    return { notified: false, reason: "unsupported" };
+  }
+
+  await writeDenglemaNotificationState({
+    ...(state || {}),
+    upload_failure_notified_at: now.toISOString(),
+    upload_failure_reason: error?.message ? String(error.message).slice(0, 160) : "upload failed",
+  }, options, dependencies);
+
+  return { notified: true };
 }
