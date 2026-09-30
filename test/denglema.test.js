@@ -10,6 +10,7 @@ import {
   collectDenglemaSnapshot,
   configureDenglemaAutoUpload,
   getDenglemaStatus,
+  normalizeDenglemaUsageLimits,
   syncDenglemaUsage,
   uploadLatestDenglemaSnapshot,
 } from "../src/denglema.js";
@@ -52,6 +53,69 @@ test("usage sample contains only cumulative daily total", () => {
 
 
 
+test("usage-limit snapshots record remaining quota without absolute account quota", () => {
+  const limits = normalizeDenglemaUsageLimits({
+    limit_updated_at: "2026-09-30T07:00:00Z",
+    limits: {
+      primary: {
+        used_percent: 82.5,
+        window_minutes: 300,
+        resets_at: "2026-09-30T09:00:00Z",
+      },
+      secondary: {
+        used_percent: 41,
+        window_minutes: 10080,
+        resets_at: "2026-10-05T00:00:00Z",
+      },
+    },
+  });
+
+  assert.deepEqual(limits, {
+    updated_at: "2026-09-30T07:00:00.000Z",
+    primary: {
+      used_percent: 82.5,
+      remaining_percent: 17.5,
+      window_minutes: 300,
+      resets_at: "2026-09-30T09:00:00.000Z",
+    },
+    secondary: {
+      used_percent: 41,
+      remaining_percent: 59,
+      window_minutes: 10080,
+      resets_at: "2026-10-05T00:00:00.000Z",
+    },
+  });
+
+  const sample = buildDenglemaUsageSample(
+    { date: "2026-09-30", totalTokens: 123 },
+    new Date("2026-09-30T07:00:00Z"),
+    "codex",
+    { limits, limit_updated_at: limits.updated_at },
+  );
+  assert.equal(sample.usage_limits.primary.remaining_percent, 17.5);
+});
+
+test("newer usage-limit observation stays pending even when tokens did not change", () => {
+  const snapshot = {
+    schema_version: 2,
+    date: "2026-09-30",
+    total_tokens: 1000,
+    usage_limits: { updated_at: "2026-09-30T08:00:00.000Z" },
+  };
+  assert.equal(snapshotUploadStatus(snapshot, {
+    schema_version: 2,
+    date: "2026-09-30",
+    total_tokens: 1000,
+    usage_limits_updated_at: "2026-09-30T07:00:00.000Z",
+  }), "pending");
+  assert.equal(snapshotUploadStatus(snapshot, {
+    schema_version: 2,
+    date: "2026-09-30",
+    total_tokens: 1000,
+    usage_limits_updated_at: "2026-09-30T08:00:00.000Z",
+  }), "uploaded");
+});
+
 test("schema v2 snapshot stays pending after only a legacy v1 upload", () => {
   const snapshot = {
     schema_version: 2,
@@ -82,6 +146,7 @@ test("status never exposes the installation token", async () => {
       },
     }),
     env: {},
+    readCodexStatusRateLimits: async () => ({ limits: null }),
   });
 
   assert.deepEqual(status, {
@@ -175,6 +240,7 @@ test("collector refreshes at most once per hour and overwrites the latest snapsh
       return { date: "2026-09-27", totalTokens: scans * 100 };
     },
     env: {},
+    readCodexStatusRateLimits: async () => ({ limits: null }),
     now: () => now,
   };
 
@@ -215,6 +281,7 @@ test("upload latest sends the stored snapshot without rescanning", async () => w
       return { date: "2026-09-27", totalTokens: 4321 };
     },
     env: {},
+    readCodexStatusRateLimits: async () => ({ limits: null }),
     now: () => new Date("2026-09-27T08:00:00Z"),
   };
   await collectDenglemaSnapshot({ dataDir, force: true }, baseDeps);
@@ -265,6 +332,7 @@ test("sync compatibility refreshes then uploads one cumulative sample", async ()
     }),
     collectCodexDailyUsage: async () => ({ date: "2026-09-24", totalTokens: 9001 }),
     env: {},
+    readCodexStatusRateLimits: async () => ({ limits: null }),
     now: () => new Date("2026-09-24T09:00:00Z"),
     fetch: async (url, init) => {
       request = { url, init };
@@ -298,6 +366,7 @@ test("dry run refreshes latest without requiring a binding or making HTTP reques
     readConfig: async () => ({ denglema: {} }),
     collectCodexDailyUsage: async () => ({ date: "2026-09-24", totalTokens: 4242 }),
     env: {},
+    readCodexStatusRateLimits: async () => ({ limits: null }),
     now: () => new Date("2026-09-24T09:00:00Z"),
     fetch: async () => {
       fetchCalled = true;

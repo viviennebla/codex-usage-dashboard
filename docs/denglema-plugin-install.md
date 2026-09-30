@@ -97,7 +97,17 @@ Agent Prompt 已经包含一次性 pairing code 和 Usage Contract。当前 Agen
   ],
   "projects": [
     { "name": "vimo-flow", "total_tokens": 80000 }
-  ]
+  ],
+  "usage_limits": {
+    "updated_at": "2026-09-29T07:00:00.000Z",
+    "primary": {
+      "used_percent": 82.5,
+      "remaining_percent": 17.5,
+      "window_minutes": 300,
+      "resets_at": "2026-09-29T09:00:00.000Z"
+    },
+    "secondary": null
+  }
 }
 ```
 
@@ -106,7 +116,8 @@ Agent Prompt 已经包含一次性 pairing code 和 Usage Contract。当前 Agen
 - `total_tokens` 是当前 installation 当天累计 token，不是当前会话 token；
 - `harness` 例如 `codex`、`cursor`、`claude-code`；
 - `projects[].name` 只允许 workspace basename；
-- model/project 明细拿不到时传空数组，不猜测。
+- model/project 明细拿不到时传空数组，不猜测；
+- `usage_limits` 是可选字段。只有当前 harness 能可信读取 rate limit 时才上传百分比、窗口和 reset 时间；不知道就省略，不推测绝对 token quota。
 
 ## 多设备 / 多 Agent
 

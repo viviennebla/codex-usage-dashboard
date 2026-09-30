@@ -48,7 +48,17 @@ A schema v2 sample is cumulative for one installation and one local calendar dat
   ],
   "projects": [
     { "name": "vimo-flow", "total_tokens": 80000 }
-  ]
+  ],
+  "usage_limits": {
+    "updated_at": "2026-09-29T07:00:00.000Z",
+    "primary": {
+      "used_percent": 82.5,
+      "remaining_percent": 17.5,
+      "window_minutes": 300,
+      "resets_at": "2026-09-29T09:00:00.000Z"
+    },
+    "secondary": null
+  }
 }
 ```
 
@@ -58,8 +68,9 @@ Rules:
 - `total_tokens`: current-date cumulative token total for this installation, not just the current chat/session.
 - `models`: cumulative model-name token aggregates. Use `[]` if unavailable.
 - `projects`: cumulative workspace **basename** token aggregates. Never upload full paths. Use `[]` if unavailable.
+- `usage_limits`: optional. Include it only when the current harness exposes a trustworthy rate-limit source. Record used/remaining percentages, window duration, reset time, and observation time; never infer an absolute token quota.
 - All token values must be non-negative integers.
-- Do not guess missing model/project breakdowns.
+- Do not guess missing model/project breakdowns or usage limits.
 
 Canonical protocol reference:
 `https://github.com/viviennebla/codex-sync-server/blob/main/docs/denglema-usage-contract.md`
@@ -213,6 +224,7 @@ Allowed upload fields:
 - harness identifier
 - model-name token aggregates
 - workspace-basename token aggregates
+- usage-limit percentages, window duration, reset time, and limit observation time
 
 Never upload:
 
