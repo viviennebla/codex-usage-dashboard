@@ -3,6 +3,7 @@ import { hostname } from "node:os";
 import {
   readConfig,
   resolveDenglemaConnection,
+  updateDenglemaAutoUpload,
   updateDenglemaConnection,
 } from "./config.js";
 import {
@@ -15,6 +16,17 @@ import {
   writeLatestDenglemaSnapshot,
 } from "./denglema-snapshot.js";
 import { collectCodexDailyUsage } from "./usage-summary.js";
+
+export const DENGLEMA_AUTO_UPLOAD_INTERVAL_MS = Object.freeze({
+  "1h": 60 * 60 * 1000,
+  "3h": 3 * 60 * 60 * 1000,
+  "6h": 6 * 60 * 60 * 1000,
+  "1d": 24 * 60 * 60 * 1000,
+});
+
+export function denglemaAutoUploadIntervalMs(interval) {
+  return DENGLEMA_AUTO_UPLOAD_INTERVAL_MS[String(interval || "").trim()] || null;
+}
 
 function cleanServer(value) {
   return typeof value === "string" && value.trim()
@@ -85,6 +97,26 @@ export async function getDenglemaStatus(options = {}, dependencies = {}) {
     installation_id: connection.installationId || null,
     timezone: connection.timezone || null,
     has_token: Boolean(connection.token),
+    auto_upload: {
+      enabled: connection.autoUpload?.enabled === true,
+      interval: connection.autoUpload?.interval || null,
+    },
+  };
+}
+
+export async function configureDenglemaAutoUpload(options = {}, dependencies = {}) {
+  const update = dependencies.updateDenglemaAutoUpload || updateDenglemaAutoUpload;
+  const enabled = options.enabled === true;
+  const interval = enabled ? String(options.interval || "").trim() : null;
+
+  if (enabled && !denglemaAutoUploadIntervalMs(interval)) {
+    throw new Error("auto upload interval must be one of: 1h, 3h, 6h, 1d");
+  }
+
+  const autoUpload = await update({ enabled, interval }, options.configPath);
+  return {
+    enabled: autoUpload.enabled === true,
+    interval: autoUpload.interval || null,
   };
 }
 
@@ -335,6 +367,20 @@ export async function runDenglemaCli(options = {}, dependencies = {}) {
     return 0;
   }
 
+  if (action === "auto-upload") {
+    const interval = String(options.interval || "").trim();
+    const enabled = interval && interval !== "off";
+    const result = await configureDenglemaAutoUpload({
+      ...options,
+      enabled,
+      interval: enabled ? interval : null,
+    }, dependencies);
+    console.log(result.enabled
+      ? `Denglema auto upload enabled: every ${result.interval}`
+      : "Denglema auto upload disabled");
+    return 0;
+  }
+
   if (action === "sync") {
     const result = await syncDenglemaUsage(options, dependencies);
     const tokens = result.sample.total_tokens.toLocaleString("en-US");
@@ -351,6 +397,7 @@ export async function runDenglemaCli(options = {}, dependencies = {}) {
   console.error("       node src/cli.js denglema snapshot");
   console.error("       node src/cli.js denglema collect");
   console.error("       node src/cli.js denglema upload");
+  console.error("       node src/cli.js denglema auto-upload --interval <off|1h|3h|6h|1d>");
   console.error("       node src/cli.js denglema sync [--dry-run]");
   return 2;
 }

@@ -10,7 +10,13 @@ function defaultConfig() {
     directories: [],
     pricing: {},
     sync: { server: null, token: null },
-    denglema: { server: null, installationId: null, token: null, timezone: null },
+    denglema: {
+      server: null,
+      installationId: null,
+      token: null,
+      timezone: null,
+      autoUpload: { enabled: false, interval: null },
+    },
   };
 }
 
@@ -48,6 +54,12 @@ export async function readConfig(configPath = CONFIG_PATH_DEFAULT) {
         timezone: typeof cfg.denglema?.timezone === "string" && cfg.denglema.timezone
           ? cfg.denglema.timezone
           : null,
+        autoUpload: {
+          enabled: cfg.denglema?.autoUpload?.enabled === true,
+          interval: ["1h", "3h", "6h", "1d"].includes(cfg.denglema?.autoUpload?.interval)
+            ? cfg.denglema.autoUpload.interval
+            : null,
+        },
       },
     };
   } catch {
@@ -80,6 +92,12 @@ export function resolveDenglemaConnection(options = {}, config = {}, env = proce
     installationId: options.installationId || config.denglema?.installationId || null,
     token: options.token || env.DENGLEMA_TOKEN || config.denglema?.token || null,
     timezone: options.timezone || config.denglema?.timezone || null,
+    autoUpload: {
+      enabled: config.denglema?.autoUpload?.enabled === true,
+      interval: ["1h", "3h", "6h", "1d"].includes(config.denglema?.autoUpload?.interval)
+        ? config.denglema.autoUpload.interval
+        : null,
+    },
   };
 }
 
@@ -102,9 +120,34 @@ export async function updateDenglemaConnection(
     timezone: typeof timezone === "string" && timezone
       ? timezone
       : current.timezone || null,
+    autoUpload: current.autoUpload || { enabled: false, interval: null },
   };
   await writeConfig(config, configPath);
   return config.denglema;
+}
+
+export async function updateDenglemaAutoUpload(
+  { enabled, interval },
+  configPath = CONFIG_PATH_DEFAULT,
+) {
+  const config = await readConfig(configPath);
+  const allowed = new Set(["1h", "3h", "6h", "1d"]);
+  const nextEnabled = enabled === true;
+  const nextInterval = nextEnabled
+    ? String(interval || "").trim()
+    : null;
+
+  if (nextEnabled && !allowed.has(nextInterval)) {
+    throw new Error("auto upload interval must be one of: 1h, 3h, 6h, 1d");
+  }
+
+  config.denglema ||= {};
+  config.denglema.autoUpload = {
+    enabled: nextEnabled,
+    interval: nextInterval,
+  };
+  await writeConfig(config, configPath);
+  return config.denglema.autoUpload;
 }
 
 export async function updateSyncConnection(

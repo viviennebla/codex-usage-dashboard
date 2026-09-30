@@ -1,6 +1,6 @@
 ---
 name: denglema-sync
-description: "Connect, inspect, collect, and upload Denglema usage from Codex, Cursor, Claude Code, or another Agent Harness when the user asks about Denglema, uploads the latest snapshot, binds an agent, or uses Chinese triggers such as 查看蹬了吗快照, 上传蹬了吗, 绑定蹬了吗, 接入蹬了吗, or 立即同步蹬了吗."
+description: "Connect, inspect, collect, upload, and configure consent-based automatic Denglema usage updates from Codex, Cursor, Claude Code, or another Agent Harness when the user asks about Denglema, binds an agent, changes upload behavior, or uses Chinese triggers such as 查看蹬了吗快照, 上传蹬了吗, 自动上传蹬了吗, 绑定蹬了吗, 接入蹬了吗, or 立即同步蹬了吗."
 ---
 
 # Denglema
@@ -101,6 +101,10 @@ When the user provides a pairing code:
 3. Call `denglema_status` and verify the same installation ID.
 4. The Codex adapter performs one fresh collection and initial upload after binding.
 5. Report the installation ID and initial uploaded date/token total. Never report the installation token.
+6. If the user has not already chosen an auto-upload preference, ask one concise follow-up:
+   `要自动更新蹬了吗吗？关闭 / 每 1 小时 / 每 3 小时（推荐） / 每 6 小时 / 每天`
+7. Do **not** enable automatic upload until the user explicitly chooses a schedule.
+8. After an explicit choice, call `denglema_auto_upload` with `off`, `1h`, `3h`, `6h`, or `1d`.
 
 ### Harness-native mode
 
@@ -159,6 +163,25 @@ Ordinary MCP upload must not rescan Codex logs.
 7. Reply with only the sample date and total token count.
 
 Do not silently switch to a different harness's data source.
+
+## Automatic upload
+
+Automatic upload is opt-in.
+
+### MCP / Codex mode
+
+When the user asks to enable, disable, or change automatic updates:
+
+1. If no interval was supplied, ask for one choice: `关闭 / 1h / 3h / 6h / 1d`.
+2. Only after the user explicitly chooses, call `denglema_auto_upload`.
+3. Report the selected schedule briefly.
+4. Do not reinterpret a vague statement such as "keep this updated" as permission to upload in the background.
+
+The bundled Codex adapter keeps the existing local snapshot cadence and uploads pending data only when the selected interval is due while the Codex MCP process is running.
+
+### Harness-native mode
+
+Do not claim background scheduling unless the current harness has a real local scheduler or persistent process capable of enforcing the user's selected interval. Otherwise keep manual upload behavior and say that automatic scheduling is not implemented for that harness yet.
 
 ## Force refresh and sync
 

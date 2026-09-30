@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "denglema",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Denglema Agent usage adapter: Codex local snapshots plus a harness-agnostic Skill and schema v2 upload contract.",
   "author": {
     "name": "viviennebla"
@@ -22,7 +22,7 @@
       "interface": {
         "displayName": "蹬了吗",
         "shortDescription": "把 Agent usage 蹬进同一个赛道",
-        "longDescription": "Codex 使用本地 MCP adapter 维护 snapshot；Denglema Skill 与 schema v2 协议同时支持 Cursor、Claude Code 和其他可提供可信累计 usage 的 Agent Harness。不会上传 prompt、代码、完整路径或对话内容。",
+        "longDescription": "Codex 使用本地 MCP adapter 维护 snapshot，并可在用户明确授权后按 1h / 3h / 6h / 1d 周期自动上传；Denglema Skill 与 schema v2 协议同时支持 Cursor、Claude Code 和其他可提供可信累计 usage 的 Agent Harness。不会上传 prompt、代码、完整路径或对话内容。",
         "developerName": "viviennebla",
         "category": "Productivity",
         "brandColor": "#E76543",

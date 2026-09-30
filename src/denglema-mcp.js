@@ -4,11 +4,16 @@ import { createInterface } from "node:readline";
 import {
   bindDenglema,
   collectDenglemaSnapshot,
+  configureDenglemaAutoUpload,
+  denglemaAutoUploadIntervalMs,
   getDenglemaStatus,
   syncDenglemaUsage,
   uploadLatestDenglemaSnapshot,
 } from "./denglema.js";
-import { maybeNotifyDenglemaSnapshot } from "./denglema-notify.js";
+import {
+  maybeNotifyDenglemaSnapshot,
+  maybeNotifyDenglemaUploadFailure,
+} from "./denglema-notify.js";
 import { maybeOpenDenglemaOnboarding } from "./denglema-onboarding.js";
 import {
   DENGLEMA_SNAPSHOT_INTERVAL_MS,
@@ -16,7 +21,7 @@ import {
 } from "./denglema-snapshot.js";
 
 const DEFAULT_SERVER = "https://vimo-dev-server.taila62aff.ts.net";
-const SERVER_INFO = { name: "denglema", version: "0.1.15" };
+const SERVER_INFO = { name: "denglema", version: "0.1.16" };
 const LATEST_PLUGIN_MANIFEST =
   "https://raw.githubusercontent.com/viviennebla/codex-usage-dashboard/main/plugin.json";
 const MIN_SCHEDULER_DELAY_MS = 60 * 1000;
@@ -105,6 +110,29 @@ export const DENGLEMA_TOOLS = [
     },
   },
   {
+    name: "denglema_auto_upload",
+    description: "Configure automatic Denglema uploads for this Codex installation. Must only be called after the user explicitly chooses a schedule.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        interval: {
+          type: "string",
+          enum: ["off", "1h", "3h", "6h", "1d"],
+          description: "Automatic upload schedule. Use off to disable.",
+        },
+      },
+      required: ["interval"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Configure Denglema auto upload",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
     name: "denglema_latest_snapshot",
     description: "Read the latest local Denglema snapshot and whether it is pending upload. This never scans logs and never uploads.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -166,11 +194,30 @@ export function nextDenglemaSnapshotDelay(
   return Math.max(MIN_SCHEDULER_DELAY_MS, remaining);
 }
 
+export function isDenglemaAutoUploadDue(
+  status,
+  latest,
+  now = new Date(),
+) {
+  if (status?.bound !== true || status?.auto_upload?.enabled !== true) return false;
+  if (latest?.upload_status !== "pending") return false;
+
+  const intervalMs = denglemaAutoUploadIntervalMs(status.auto_upload.interval);
+  if (!intervalMs) return false;
+
+  const uploadedAt = Date.parse(latest?.last_uploaded_at || "");
+  if (!Number.isFinite(uploadedAt)) return true;
+  return now.getTime() - uploadedAt >= intervalMs;
+}
+
 export function startDenglemaSnapshotScheduler(dependencies = {}) {
   const collect = dependencies.collectDenglemaSnapshot || collectDenglemaSnapshot;
   const notify = dependencies.maybeNotifyDenglemaSnapshot || maybeNotifyDenglemaSnapshot;
+  const notifyUploadFailure =
+    dependencies.maybeNotifyDenglemaUploadFailure || maybeNotifyDenglemaUploadFailure;
   const onboarding = dependencies.maybeOpenDenglemaOnboarding || maybeOpenDenglemaOnboarding;
   const status = dependencies.getDenglemaStatus || getDenglemaStatus;
+  const upload = dependencies.uploadLatestDenglemaSnapshot || uploadLatestDenglemaSnapshot;
   const setTimer = dependencies.setTimeout || setTimeout;
   const clearTimer = dependencies.clearTimeout || clearTimeout;
   let timer = null;
@@ -182,25 +229,36 @@ export function startDenglemaSnapshotScheduler(dependencies = {}) {
 
     let delay = ERROR_RETRY_MS;
     try {
+      const bindingStatus = await status({}, dependencies);
       if (!onboardingChecked) {
         onboardingChecked = true;
         try {
-          await onboarding(await status({}, dependencies), {}, dependencies);
+          await onboarding(bindingStatus, {}, dependencies);
         } catch {}
       }
 
       const result = await collect({}, dependencies);
-      if (result?.collected) {
-        try {
-          await notify(result, {}, dependencies);
-        } catch {}
-      }
       const now = dependencies.now?.() || new Date();
       delay = nextDenglemaSnapshotDelay(
         result?.snapshot,
         now,
         DENGLEMA_SNAPSHOT_INTERVAL_MS,
       );
+
+      if (isDenglemaAutoUploadDue(bindingStatus, result, now)) {
+        try {
+          await upload({}, dependencies);
+        } catch (error) {
+          try {
+            await notifyUploadFailure(error, {}, dependencies);
+          } catch {}
+          delay = ERROR_RETRY_MS;
+        }
+      } else if (result?.collected) {
+        try {
+          await notify(result, {}, dependencies);
+        } catch {}
+      }
     } catch {
       delay = ERROR_RETRY_MS;
     }
@@ -226,6 +284,8 @@ async function callDenglemaTool(name, args = {}, dependencies = {}) {
   const bind = dependencies.bindDenglema || bindDenglema;
   const latest = dependencies.getLatestDenglemaSnapshot || getLatestDenglemaSnapshot;
   const upload = dependencies.uploadLatestDenglemaSnapshot || uploadLatestDenglemaSnapshot;
+  const configureAutoUpload =
+    dependencies.configureDenglemaAutoUpload || configureDenglemaAutoUpload;
   const sync = dependencies.syncDenglemaUsage || syncDenglemaUsage;
 
   if (name === "denglema_status") {
@@ -284,6 +344,16 @@ async function callDenglemaTool(name, args = {}, dependencies = {}) {
       initial_upload: initialUpload,
     };
   }
+  if (name === "denglema_auto_upload") {
+    const interval = String(args.interval || "").trim();
+    if (!["off", "1h", "3h", "6h", "1d"].includes(interval)) {
+      throw new Error("interval must be one of: off, 1h, 3h, 6h, 1d");
+    }
+    return configureAutoUpload({
+      enabled: interval !== "off",
+      interval: interval === "off" ? null : interval,
+    }, dependencies);
+  }
   if (name === "denglema_latest_snapshot") {
     return latest({}, dependencies);
   }
@@ -327,7 +397,7 @@ export async function handleDenglemaMcpRequest(request, dependencies = {}) {
         protocolVersion: request.params?.protocolVersion || "2025-06-18",
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
-        instructions: "This MCP server is the Codex adapter for harness-agnostic Denglema. It keeps one latest local Codex snapshot; uploads happen only when the user chooses, except the first bind upload.",
+        instructions: "This MCP server is the Codex adapter for harness-agnostic Denglema. It keeps one latest local Codex snapshot. Automatic upload is off by default and may only be enabled after the user explicitly chooses a schedule.",
       },
     };
   }
