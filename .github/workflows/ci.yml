@@ -1,0 +1,56 @@
+name: CI / CD
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Node.js tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run tests
+        run: npm test
+
+      - name: Check whitespace
+        run: git diff --check
+
+  deploy:
+    name: Deploy production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: [self-hosted, linux, x64, codex-family-prod, codex-usage-dashboard]
+    timeout-minutes: 20
+
+    steps:
+      - name: Deploy tested commit
+        env:
+          CODEX_FAMILY_EXPECTED_SHA: ${{ github.sha }}
+        run: /bin/bash /home/feiyan/workspace/codex-family/deploy/deploy.sh codex-usage-dashboard
+
+      - name: Deployment summary
+        run: |
+          echo "### Production deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "- component: codex-usage-dashboard" >> "$GITHUB_STEP_SUMMARY"
+          echo "- tested SHA: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "- host: vimo-dev-server" >> "$GITHUB_STEP_SUMMARY"
