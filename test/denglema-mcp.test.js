@@ -141,7 +141,7 @@ test("plugin version comparison and unavailable checks are safe", async () => {
   const result = await checkDenglemaPluginUpdate({
     fetch: async () => { throw new Error("offline"); },
   });
-  assert.equal(result.current_version, "0.1.15");
+  assert.equal(result.current_version, "0.1.16");
   assert.equal(result.latest_version, null);
   assert.equal(result.update_available, false);
   assert.equal(result.update_check, "unavailable");
