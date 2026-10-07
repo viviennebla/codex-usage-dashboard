@@ -26,6 +26,7 @@ import {
 import { preserveLoggedRateLimits, readCodexStatusRateLimits } from "./status.js";
 import { mergeWithDeviceStates } from "./headless.js";
 import { dayKey } from "./time.js";
+import { summarizeSessionUsageWindows } from "./session-usage.js";
 
 export const SNAPSHOT_REFRESH_POLICIES = Object.freeze({
   CACHED: "if-stale",
@@ -174,6 +175,26 @@ export function createUsageService(defaultOptions = {}, dependencies = {}) {
     const local = await getLocalSnapshot(resolved, { ...request, policy });
     if (request.merge === false) return local;
     return mergeDevices(local, { stateDir });
+  }
+
+  async function sessionUsage(windows, options = {}) {
+    const resolved = optionsFor(options);
+    if (!Array.isArray(windows) || windows.length === 0) {
+      return { generated_at: new Date().toISOString(), windows: [] };
+    }
+    const since = windows.reduce((value, item) => !value || Date.parse(item.since) < Date.parse(value) ? item.since : value, null);
+    const until = windows.reduce((value, item) => !value || Date.parse(item.until) > Date.parse(value) ? item.until : value, null);
+    const reports = await loadReports({
+      ...resolved,
+      lightweight: true,
+      since,
+      until,
+      activitySince: since,
+    });
+    return {
+      generated_at: new Date().toISOString(),
+      windows: summarizeSessionUsageWindows(reports.events || [], windows),
+    };
   }
 
   async function refreshRateLimits(options = {}, { onProgress } = {}) {
@@ -399,6 +420,7 @@ export function createUsageService(defaultOptions = {}, dependencies = {}) {
     getLocalSnapshot,
     getSnapshot,
     getUsageSnapshot: getSnapshot,
+    sessionUsage,
     refreshRateLimits,
     push,
     pushSnapshot: push,
