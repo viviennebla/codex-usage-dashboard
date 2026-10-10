@@ -21,6 +21,7 @@ import { CodexLimitsClient } from "./codex-limits.js";
 import { runSkillsCli } from "./skills-cli.js";
 import { runDenglemaCli } from "./denglema.js";
 import { createUsageService, SNAPSHOT_REFRESH_POLICIES } from "./application-service.js";
+import { normalizeSessionUsageWindows } from "./session-usage.js";
 import {
   configureConnection,
   createTerminalPrompter,
@@ -317,6 +318,20 @@ function startWeb(options) {
       // ── GET /api/snapshot ── return the cached local snapshot merged with pulled devices
       if (req.method === "GET" && url.pathname === "/api/snapshot") {
         sendJson(res, 200, dashboardSummary(await getCachedSnapshot()));
+        return;
+      }
+
+      // ── POST /api/session-usage ── aggregate local usage inside requested Session time windows
+      if (req.method === "POST" && url.pathname === "/api/session-usage") {
+        const body = await readRequestBody(req);
+        let windows;
+        try {
+          windows = normalizeSessionUsageWindows(body?.windows);
+        } catch (error) {
+          sendError(res, 400, error.message);
+          return;
+        }
+        sendJson(res, 200, await webUsageService.sessionUsage(windows, snapshotOptions));
         return;
       }
 
