@@ -65,6 +65,8 @@ codex plugin add denglema@denglema
 
 首次接入会自动上传一次。之后 Plugin 默认仍只在本地最多每小时刷新 latest snapshot；用户可明确授权 `1h / 3h / 6h / 1d` 自动上传周期，未授权时保持手动上传。自动上传开启后不再弹普通“快照已生成”提醒；关闭自动上传时每天最多提醒一次，自动上传失败才发送异常提醒。想手动刷新时仍可说 `上传蹬了吗`。详细说明见 `docs/denglema-plugin-install.md`。
 
+**Agent 共创**：Plugin 内置 `denglema-co-create` Skill。对 Codex 说「自定义蹬了吗人物」或「给蹬了吗投稿一个新成就」，Agent 可按真实代码实现、测试，并在 GitHub 授权后通过 Fork 代提 PR，不需要加入仓库协作组。现有个人设置仍直接在 `/me` 或 `/lab` 修改，PR 需要维护者审核。
+
 ## MVP Release
 
 `v0.2.0-mvp` 是一个源码版 MVP release：Codex Usage Dashboard 已经覆盖 usage、cost、rate limits、sources、model / project / session breakdown，以及跨设备 usage snapshot 和 Skill Bundles 同步。当前仓库没有发布 npm 包或二进制安装包，推荐通过 Git tag 拉取源码运行。
