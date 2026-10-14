@@ -77,6 +77,23 @@ Agent Prompt 已经包含一次性 pairing code 和 Usage Contract。当前 Agen
 
 如果 harness 没有可信的累计 token 来源，Skill 必须明确说暂时无法可靠采集，不能猜数字。
 
+## Agent 共创：人物与成就投稿
+
+Plugin 从 `0.1.19` 起内置另一项独立 Skill：`skills/denglema-co-create/SKILL.md`。它**不是** usage 上传命令，而是帮用户把自然语言创意变成 GitHub 投稿。
+
+直接在 Codex 里说：
+
+```text
+自定义蹬了吗人物：我想增加一个骑扫帚的女巫，帽子会随飞行摇晃，大家都能选
+给蹬了吗投稿一个新成就：午休漫游者，工作日午间产生 usage 时解锁，文案要好玩
+```
+
+Agent 会先确认现有 `/me`、`/lab` 能否设置；已支持的个人选项不需要 PR。全体用户可复用的新角色、载具、动作、成就则从 `viviennebla/codex-sync-server` 当前 `main` 开发、测试，再提交 PR。
+
+**无需仓库 Collaborator 身份**：拥有 GitHub 账号且已授权 Agent 的用户可以通过自己的 Fork 提 PR。使用 GitHub CLI 时，可先运行 `gh auth login` 完成一次性登录。Skill 不会索取明文 token。用户没有 GitHub 账号或授权时，Agent 可以先整理方案，但不能冒充已投稿；目前还没有完全免 GitHub 的网站内投稿入口。
+
+PR 不会自动合并或发布，维护者审核后才会通过已有 CI/CD 上线。
+
 ## Denglema Usage Contract
 
 协议是 harness-agnostic 的，Canonical 版本在：
@@ -162,7 +179,9 @@ codex-usage-dashboard/
 ├─ plugin.json
 ├─ mcp.json
 └─ skills/
-   └─ denglema-sync/
+   ├─ denglema-sync/
+   │  └─ SKILL.md
+   └─ denglema-co-create/
       └─ SKILL.md
 ```
 
