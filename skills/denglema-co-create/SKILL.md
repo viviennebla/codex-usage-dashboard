@@ -1,6 +1,6 @@
 ---
 name: denglema-co-create
-description: "Help Denglema users co-create a shared rider appearance, transport, motion, accessory, or playful achievement and submit a GitHub pull request. Trigger on requests such as 自定义蹬了吗人物, 给蹬了吗加一个角色, 新交通工具, 设计新成就, 投稿蹬了吗, or 帮我提交蹬了吗 PR."
+description: "Help Denglema users contribute a playful achievement, social behavior, or non-art product feature through a GitHub pull request. Trigger on 设计新成就, 投稿蹬了吗成就, 实现新功能, or general shared Denglema feature contribution. For PNG characters and vehicles, use denglema-character instead."
 ---
 
 # 蹬了吗 · Agent 共创
@@ -10,14 +10,14 @@ description: "Help Denglema users co-create a shared rider appearance, transport
 服务端 / 网站仓库：`viviennebla/codex-sync-server`  
 插件 / 使用量采集仓库：`viviennebla/codex-usage-dashboard`
 
-本 Skill 面向 **共创公开能力**，不是上传 usage 的流程。上传、绑定和自动上传请交给 `denglema-sync`。
+本 Skill 面向 **共创公开功能**，不是上传 usage 的流程。上传、绑定和自动上传交给 `denglema-sync`；**自定义人物 / 载具 PNG 素材包、逐帧动画、Emoji 换头等一律交给 `denglema-character`**，不要在本 Skill 里走旧 SVG / CSS 骨架动画路径。
 
 ## 1. 先识别需求
 
 | 用户想做什么 | 默认处理 |
 | --- | --- |
 | 换已有头像、表情、交通方式、口号 | 引导使用网站 `/me`、`/lab`，不为个人配置提交公共 PR |
-| 增加新的共享人物外观、配件、载具或动作 | 在服务端前端实现并提交 PR |
+| 新增/替换人物或载具 PNG 素材、换头、逐帧动作 | 使用 `denglema-character` Skill 的 Rider/Vehicle Pack 注册和验证流程（服务端 PR #81） |
 | 增加可以由真实数据判定的趣味成就 | 在服务端实现解锁规则、测试并提交 PR |
 | 只有创意、没有足够明确的可验证规则 | 帮用户收敛设计，或提交 GitHub Issue；不要伪造已实现的 PR |
 | 只想讨论方案、没有要求投稿 | 给出简短方案，不擅自创建 Issue、Fork 或 PR |
@@ -26,16 +26,9 @@ description: "Help Denglema users co-create a shared rider appearance, transport
 
 ## 2. 两类投稿的实现边界
 
-### 人物 / 载具 / 动作 / 配件
+### 人物与载具的边界
 
-以 `codex-sync-server` 当前 `main` 为准，先阅读 `AGENTS.md`，再找实际渲染与设置入口；历史文件路径只是线索：
-
-- `public/app.js`：赛道人物、交通工具、动作；
-- `public/styles.css`：外观与动画；
-- `public/profile.js`、`public/rider-lab.*`：个人设置；
-- 持久化选项如确有必要才修改相关 server/state 文件。
-
-遵守已有角色骨架、动画和移动端布局。新增交通方式应为所有人平等可选，不按 token 消耗解锁。不把装饰物当成新的 usage 数据字段。优先复用轻量 DOM/CSS/emoji，不为了一个角色引入框架、重型动画库或在线图片依赖。没有可用图像生成或验收工具时，不要声称已生成/验证视觉素材。
+像素人物、透明 PNG 逐帧动画、载具图层复用、角色素材入库属于独立的 **denglema-character** Skill；务必遵守服务端 PR #81 的动态 Rider Pack 合同与发布依赖，不使用旧 DOM/CSS/Emoji/SVG 来替代用户要求的 PNG 美术。用户只是配置已发布外观时走 /me，不需要提交 PR。若用户需要的是**与美术资源无关**的新社交行为或页面功能，再按本 Skill 的普通代码 PR 流程开发。
 
 ### 成就
 
