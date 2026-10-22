@@ -65,7 +65,7 @@ codex plugin add denglema@denglema
 
 首次接入会自动上传一次。之后 Plugin 默认仍只在本地最多每小时刷新 latest snapshot；用户可明确授权 `1h / 3h / 6h / 1d` 自动上传周期，未授权时保持手动上传。自动上传开启后不再弹普通“快照已生成”提醒；关闭自动上传时每天最多提醒一次，自动上传失败才发送异常提醒。想手动刷新时仍可说 `上传蹬了吗`。详细说明见 `docs/denglema-plugin-install.md`。
 
-**Agent 共创**：Plugin 内置 `denglema-co-create` Skill。对 Codex 说「自定义蹬了吗人物」或「给蹬了吗投稿一个新成就」，Agent 可按真实代码实现、测试，并在 GitHub 授权后通过 Fork 代提 PR，不需要加入仓库协作组。现有个人设置仍直接在 `/me` 或 `/lab` 修改，PR 需要维护者审核。
+**Agent 共创**：Plugin 内置 `denglema-character`（PNG 人物、Emoji 换头、逐帧动作和可复用载具包）与 `denglema-co-create`（趣味成就和其他功能投稿）两个 Skill。对 Codex 说「用 PNG 素材自定义蹬了吗人物」，Agent 会按 `codex-sync-server` 的 Rider Pack 代码合同导入素材、验证 PNG、预览并通过 GitHub Fork 提 PR。角色真正可上线取决于服务端 [PR #81](https://github.com/viviennebla/codex-sync-server/pull/81) 合并、投稿审核及部署；已发布角色可以直接在 `/me` 选择。详情见 `docs/denglema-plugin-install.md`。
 
 ## MVP Release
 
