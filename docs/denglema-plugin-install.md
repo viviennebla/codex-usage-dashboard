@@ -77,6 +77,43 @@ Agent Prompt 已经包含一次性 pairing code 和 Usage Contract。当前 Agen
 
 如果 harness 没有可信的累计 token 来源，Skill 必须明确说暂时无法可靠采集，不能猜数字。
 
+## Agent 共创：PNG 自定义人物、载具和趣味成就
+
+Plugin 0.1.19 把用户投稿分成两个互补 Skill（都和 Usage 自动上传相互独立）：
+
+- **denglema-character**：将用户准备的透明逐帧 PNG 打包为 Rider Pack / Vehicle Pack，调用服务端仓库导入脚本、验证并通过 GitHub PR 投稿。
+- **denglema-co-create**：新增趣味成就、其他社交互动或非素材类功能的贡献。
+
+在 Codex 中直接说：
+
+~~~text
+用 PNG 素材自定义蹬了吗人物：把我准备的猫猫骑手素材上传到代码库，验证后投稿
+给蹬了吗做一个滑板车：人物姿态与载具帧分别制作，提交 PR
+给蹬了吗投稿新成就：午休漫游者
+~~~
+
+### PNG 角色投稿（代码流程，不只是说明文档）
+
+目标仓库：**viviennebla/codex-sync-server**。Plugin 自己不存储角色素材。Agent 的实际操作是：
+
+~~~text
+用户提供或委托制作 PNG 帧
+  → 角色包 / 载具包 manifest.json
+  → npm run riders:import -- /path/to/character
+  → 可选 npm run vehicles:import -- /path/to/vehicle
+  → npm run riders:validate && npm test
+  → /rider-preview 视觉验收
+  → 用户授权的 GitHub Fork + Pull Request
+  → 维护者审核、CI、合并、部署
+  → /api/rider-catalog 自动发现、/me 选择
+~~~
+
+完整 Schema 和最小样例位于 Plugin 的 **skills/denglema-character/references/pack-contract.md**。Skill 还要求 Agent 优先核对服务端代码中的 **docs/denglema-character-frames-v1.md** 和 **src/rider-assets.js**，不能照着过期模板硬编码服务器路由。所有 PNG 都采用相同的 128×100 RGBA8 透明画布；人和载具以独立帧合成，可选 Emoji 文字换头，**不使用旧 SVG/CSS 人物**。
+
+**上线依赖**：服务端的 [PR #81](https://github.com/viviennebla/codex-sync-server/pull/81) 尚未合并时，Agent 可以在其分支上准备和验证素材，但不能声称它已经上线；不能直接把尚不受 main 支持的素材 PR 说成“合并即可实装”。Skill 会先检查最新 main 和 PR 状态。
+
+**提交授权**：用户不需要上游仓库 Collaborator 权限，但必须通过自己已授权的 GitHub 工具或 Fork 身份提交。没有 GitHub 登录可先完成本地包；不索取明文 PAT、不直接合并公共仓库。没有发布权的素材不允许擅自上传。当前尚无网站直接上传任意 PNG 的开放 API。
+
 ## Denglema Usage Contract
 
 协议是 harness-agnostic 的，Canonical 版本在：
@@ -162,7 +199,12 @@ codex-usage-dashboard/
 ├─ plugin.json
 ├─ mcp.json
 └─ skills/
-   └─ denglema-sync/
+   ├─ denglema-sync/
+   │  └─ SKILL.md
+   ├─ denglema-character/
+   │  ├─ SKILL.md
+   │  └─ references/pack-contract.md
+   └─ denglema-co-create/
       └─ SKILL.md
 ```
 
