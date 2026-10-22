@@ -47,14 +47,30 @@ test("Denglema is a single portable plugin package", async () => {
   assert.equal(await missing(".mcp.json"), true);
   assert.equal(await missing("skills/denglema-sync/SKILL.md"), false);
   assert.equal(await missing("skills/denglema-co-create/SKILL.md"), false);
+  assert.equal(await missing("skills/denglema-character/SKILL.md"), false);
+  assert.equal(await missing("skills/denglema-character/references/pack-contract.md"), false);
 
   const prompts = plugin.extensions["com.openai"].interface.defaultPrompt;
   assert.equal(prompts.length, 3);
-  assert.ok(prompts.some((prompt) => prompt.includes("人物")));
+  assert.ok(prompts.some((prompt) => prompt.includes("人物") && prompt.includes("PNG")));
   assert.ok(prompts.some((prompt) => prompt.includes("成就")));
 
   const coCreateSkill = await readFile("skills/denglema-co-create/SKILL.md", "utf8");
   assert.match(coCreateSkill, /name: denglema-co-create/);
   assert.match(coCreateSkill, /codex-sync-server/);
   assert.match(coCreateSkill, /gh pr create/);
+  const characterSkill = await readFile("skills/denglema-character/SKILL.md", "utf8");
+  const characterContract = await readFile("skills/denglema-character/references/pack-contract.md", "utf8");
+  assert.match(characterSkill, /name: denglema-character/);
+  assert.match(characterSkill, /scripts\/rider-packs\.mjs/);
+  assert.match(characterSkill, /npm run riders:import/);
+  assert.match(characterSkill, /npm run riders:validate/);
+  assert.match(characterSkill, /PR #81/);
+  assert.match(characterSkill, /denglema-sync/);
+  assert.match(characterContract, /"schema_version": 2/);
+  assert.match(characterContract, /"vehicle_id": "city-scooter"/);
+  assert.match(characterContract, /128×100/);
+  assert.match(coCreateSkill, /denglema-character/);
+  assert.doesNotMatch(characterSkill, /自动合并已完成/);
+
 });
