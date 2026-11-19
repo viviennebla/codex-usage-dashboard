@@ -97,6 +97,19 @@ export function normalizeDenglemaUsageLimits(value, fallbackUpdatedAt = null) {
   };
 }
 
+// Local-only dimensions; the public upload contract continues to send totals only.
+function localModelRows(rows = []) {
+  const keys = { input_tokens: "inputTokens", cache_read_tokens: "cacheReadTokens", output_tokens: "outputTokens", reasoning_output_tokens: "reasoningOutputTokens" };
+  return normalizeDimensionRows(rows).map(row => {
+    const matches = rows.filter(item => String(item?.name || "").trim().slice(0, 96) === row.name);
+    const details = Object.fromEntries(Object.entries(keys).map(([field, key]) => {
+      const values = matches.map(item => item[key]), sum = values.reduce((total, value) => total + value, 0);
+      return [field, values.every(value => Number.isSafeInteger(value) && value >= 0) && Number.isSafeInteger(sum) ? sum : null];
+    }));
+    return { ...row, ...details };
+  });
+}
+
 export function buildDenglemaUsageSample(
   dailyUsage,
   observedAt = new Date(),
@@ -111,7 +124,7 @@ export function buildDenglemaUsageSample(
     observed_at: observedAt.toISOString(),
     date: dailyUsage.date,
     total_tokens: nonNegativeInteger(dailyUsage.totalTokens),
-    models: normalizeDimensionRows(dailyUsage.models),
+    models: localModelRows(dailyUsage.models),
     projects: normalizeDimensionRows(dailyUsage.projects),
     ...(usageLimits ? { usage_limits: usageLimits } : {}),
   };

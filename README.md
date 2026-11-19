@@ -528,3 +528,7 @@ node src/cli.js --help
 - 费用是按本地 token 日志和价格表推算的 API 等价估算，不等同于账单。
 - Rate limit 读取依赖本机可用的 `codex app-server --stdio`，失败时仪表盘仍可展示日志统计。
 - 如果 Codex 或 Claude 日志格式变化，解析器会尽量跳过无法识别的行，但可能需要更新代码和测试。
+
+### Workbench 模型 Token 明细
+
+本地采集快照的 `models` 保留可选的 `input_tokens`（不含缓存）、`cache_read_tokens`、`output_tokens` 与 `reasoning_output_tokens`（输出子集）。复用原生 usage 事件中的现有计数，不根据总量或账号百分比推算。缺失维度为 `null`，真实零保留。对外 Denglema 上传仍沿用原有模型总量合同；明细仅用于本地快照与授权的 Workbench 转发，不回填旧日期。

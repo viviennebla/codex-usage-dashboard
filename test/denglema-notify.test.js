@@ -140,6 +140,7 @@ test("unsupported native notification does not mark snapshot as notified", async
     { dataDir },
     {
       env: {},
+      readConfig: async () => ({ denglema: { autoUpload: { enabled: false } } }),
       sendNativeNotification: async () => false,
     },
   );
