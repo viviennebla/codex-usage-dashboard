@@ -42,7 +42,7 @@ test("summarizeCodexDay aggregates total, models, and workspace project basename
   assert.deepEqual(result, {
     date: "2026-09-24",
     totalTokens: 30,
-    models: [{ name: "gpt-5.6-sol", totalTokens: 30 }],
+    models: [{ name: "gpt-5.6-sol", totalTokens: 30, inputTokens: null, cacheReadTokens: null, outputTokens: null, reasoningOutputTokens: null }],
     projects: [{ name: "vimo-sop", totalTokens: 10 }],
   });
 });
@@ -154,9 +154,16 @@ test("collectCodexDailyUsage scans one native Codex environment and exposes stag
   assert.equal(received.activitySince, received.since);
   assert.equal(result.date, "2026-09-24");
   assert.equal(result.totalTokens, 42);
-  assert.deepEqual(result.models, [{ name: "gpt-5.6-sol", totalTokens: 42 }]);
+  assert.deepEqual(result.models, [{ name: "gpt-5.6-sol", totalTokens: 42, inputTokens: null, cacheReadTokens: null, outputTokens: null, reasoningOutputTokens: null }]);
   assert.deepEqual(result.projects, [{ name: "demo", totalTokens: 42 }]);
   assert.equal(result.timingsMs.scanCandidates, 12);
   assert.equal(result.timingsMs.parseActiveSessions, 34);
   assert.equal(Number.isFinite(result.timingsMs.aggregateModelsProjects), true);
+});
+
+test("model token dimensions sum per model without treating missing counters as zero", () => {
+  const event = { timestamp: "2026-11-19T01:00:00Z", model: "model-a", totalTokens: 100, inputTokens: 20, cacheReadTokens: 70, outputTokens: 10, reasoningOutputTokens: 5 };
+  const result = summarizeCodexDay([event, { ...event, model: "model-b", inputTokens: 0 }, { ...event, inputTokens: undefined }], "2026-11-19", "UTC");
+  assert.deepEqual(result.models[0], { name: "model-a", totalTokens: 200, inputTokens: null, cacheReadTokens: 140, outputTokens: 20, reasoningOutputTokens: 10 });
+  assert.equal(result.models[1].inputTokens, 0);
 });

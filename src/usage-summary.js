@@ -17,6 +17,13 @@ function addDimension(target, name, tokens) {
   target.set(name, (target.get(name) || 0) + tokens);
 }
 
+const tokenDetails = ["inputTokens", "cacheReadTokens", "outputTokens", "reasoningOutputTokens"];
+
+function modelRows(values) {
+  return [...values.entries()].map(([name, usage]) => ({ name, ...usage }))
+    .sort((a, b) => b.totalTokens - a.totalTokens || a.name.localeCompare(b.name));
+}
+
 function dimensionRows(values) {
   return [...values.entries()]
     .map(([name, totalTokens]) => ({ name, totalTokens: Math.round(totalTokens) }))
@@ -48,11 +55,16 @@ export function summarizeCodexDay(events = [], date, timezone) {
     const tokens = number(event.totalTokens);
     totalTokens += tokens;
 
-    addDimension(
-      models,
-      cleanDimensionName(event.model, "unknown"),
-      tokens,
-    );
+    if (tokens > 0) {
+      const name = cleanDimensionName(event.model, "unknown"), previous = models.get(name);
+      const usage = { totalTokens: Math.round((previous?.totalTokens || 0) + tokens) };
+      for (const key of tokenDetails) {
+        const value = event[key];
+        const sum = (previous?.[key] || 0) + value;
+        usage[key] = Number.isSafeInteger(value) && value >= 0 && (!previous || previous[key] !== null) && Number.isSafeInteger(sum) ? sum : null;
+      }
+      models.set(name, usage);
+    }
 
     // Only upload real workspace basenames. Projectless Codex threads can use
     // thread titles as display names, which must not leave the local machine.
@@ -68,7 +80,7 @@ export function summarizeCodexDay(events = [], date, timezone) {
   return {
     date,
     totalTokens: Math.round(totalTokens),
-    models: dimensionRows(models),
+    models: modelRows(models),
     projects: dimensionRows(projects),
     ...(latestRateLimits ? {
       rateLimits: latestRateLimits,

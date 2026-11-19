@@ -14,7 +14,7 @@ import {
   syncDenglemaUsage,
   uploadLatestDenglemaSnapshot,
 } from "../src/denglema.js";
-import { getLatestDenglemaSnapshot, resolveDenglemaDataDir, snapshotUploadStatus } from "../src/denglema-snapshot.js";
+import { getLatestDenglemaSnapshot, resolveDenglemaDataDir, snapshotUploadStatus, writeLatestDenglemaSnapshot } from "../src/denglema-snapshot.js";
 
 async function withTempData(fn) {
   const dataDir = await mkdtemp(join(tmpdir(), "denglema-test-"));
@@ -454,4 +454,17 @@ test("dry run refreshes latest without requiring a binding or making HTTP reques
   const latest = await getLatestDenglemaSnapshot({ dataDir }, { env: {} });
   assert.equal(latest.snapshot.total_tokens, 4242);
   assert.equal(latest.upload_status, "pending");
+}));
+
+test("local snapshots retain model dimensions while legacy totals remain unknown", () => {
+  const sample = buildDenglemaUsageSample({ date: "2026-11-19", totalTokens: 120, models: [{ name: "model", totalTokens: 100, inputTokens: 20, cacheReadTokens: 70, outputTokens: 10, reasoningOutputTokens: 5 }, { name: "old", totalTokens: 20 }] });
+  assert.deepEqual(sample.models[0], { name: "model", total_tokens: 100, input_tokens: 20, cache_read_tokens: 70, output_tokens: 10, reasoning_output_tokens: 5 });
+  assert.equal(sample.models[1].input_tokens, null);
+});
+
+test("public upload remains totals-only when the local model snapshot has private extensions", async () => withTempData(async dataDir => {
+  const sample = buildDenglemaUsageSample({ date: "2026-11-19", totalTokens: 100, models: [{ name: "model", totalTokens: 100, inputTokens: 20, cacheReadTokens: 70, outputTokens: 10 }] });
+  await writeLatestDenglemaSnapshot(sample, { dataDir }); let body;
+  await uploadLatestDenglemaSnapshot({ dataDir }, { readConfig: async () => ({ denglema: { server: "https://test.invalid", token: "isolated-token" } }), fetch: async (url, options) => { body = JSON.parse(options.body); return { ok: true, json: async () => ({}) }; } });
+  assert.deepEqual(body.models, [{ name: "model", total_tokens: 100 }]);
 }));
